@@ -1,57 +1,72 @@
 import { createSchema } from "graphql-yoga";
-import { User, IUser } from "./models/User";
+import { Collection, ObjectId, Db } from "mongodb";
+
+// Type for our MongoDB client that will be injected via context
+export interface Context {
+  db: Db;
+}
 
 export const schema = createSchema({
   typeDefs: /* GraphQL */ `
-    type User {
+    scalar JSON
+
+    type Document {
       id: ID!
-      email: String!
-      name: String!
-      createdAt: String!
-      updatedAt: String!
+      data: JSON!
     }
 
     type Query {
-      users: [User!]!
-      user(id: ID!): User
-    }
-
-    input CreateUserInput {
-      email: String!
-      name: String!
-    }
-
-    input UpdateUserInput {
-      email: String
-      name: String
+      documents(collection: String!, filter: JSON): [Document!]!
+      document(collection: String!, id: ID!): Document
     }
 
     type Mutation {
-      createUser(input: CreateUserInput!): User!
-      updateUser(id: ID!, input: UpdateUserInput!): User
-      deleteUser(id: ID!): Boolean!
+      createDocument(collection: String!, data: JSON!): Document!
+      updateDocument(collection: String!, id: ID!, data: JSON!): Document
+      deleteDocument(collection: String!, id: ID!): Boolean!
     }
   `,
   resolvers: {
-    Query: {
-      users: async () => {
-        return await User.find();
+    Document: {
+      id: (parent: any) => parent._id.toString(),
+      data: (parent: any) => {
+        const { _id, ...data } = parent;
+        return data;
       },
-      user: async (_, { id }) => {
-        return await User.findById(id);
+    },
+    Query: {
+      documents: async (_, { collection, filter = {} }, context: Context) => {
+        return await context.db.collection(collection).find(filter).toArray();
+      },
+      document: async (_, { collection, id }, context: Context) => {
+        return await context.db.collection(collection).findOne({
+          _id: new ObjectId(id),
+        });
       },
     },
     Mutation: {
-      createUser: async (_, { input }) => {
-        const user = new User(input);
-        return await user.save();
+      createDocument: async (_, { collection, data }, context: Context) => {
+        const result = await context.db.collection(collection).insertOne(data);
+        return {
+          _id: result.insertedId,
+          ...data,
+        };
       },
-      updateUser: async (_, { id, input }) => {
-        return await User.findByIdAndUpdate(id, input, { new: true });
+      updateDocument: async (_, { collection, id, data }, context: Context) => {
+        const result = await context.db
+          .collection(collection)
+          .findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            { $set: data },
+            { returnDocument: "after" }
+          );
+        return result;
       },
-      deleteUser: async (_, { id }) => {
-        const result = await User.findByIdAndDelete(id);
-        return !!result;
+      deleteDocument: async (_, { collection, id }, context: Context) => {
+        const result = await context.db.collection(collection).deleteOne({
+          _id: new ObjectId(id),
+        });
+        return result.deletedCount === 1;
       },
     },
   },

@@ -5,9 +5,10 @@ A NodeJS GraphQL server for everyone.
 ## Features
 
 - Express.js with GraphQL Yoga
-- MongoDB Atlas integration
+- Native MongoDB driver integration
+- Schema-less document storage
 - TypeScript support
-- User management with CRUD operations
+- Dynamic collection and field support
 
 ## Setup
 
@@ -33,9 +34,41 @@ The server will be running at `http://localhost:4000/graphql` with GraphiQL inte
 ### Available Operations
 
 - Query:
-  - `users`: Get all users
-  - `user(id: ID!)`: Get user by ID
+  - `documents(collection: String!, filter: JSON): [Document!]!`: Get all documents from a collection
+  - `document(collection: String!, id: ID!): Document`: Get document by ID from a collection
 - Mutation:
-  - `createUser(input: CreateUserInput!)`: Create a new user
-  - `updateUser(id: ID!, input: UpdateUserInput!)`: Update an existing user
-  - `deleteUser(id: ID!)`: Delete a user
+  - `createDocument(collection: String!, data: JSON!): Document!`: Create a new document
+  - `updateDocument(collection: String!, id: ID!, data: JSON!): Document`: Update an existing document
+  - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
+
+### Example Usage
+
+```graphql
+# Create a document in the "users" collection
+mutation {
+  createDocument(
+    collection: "users",
+    data: {
+      name: "John Doe",
+      email: "john@example.com",
+      customField: "value"
+    }
+  ) {
+    id
+    data
+  }
+}
+
+# Query documents with a filter
+query {
+  documents(
+    collection: "users",
+    filter: {
+      "email": { "$exists": true }
+    }
+  ) {
+    id
+    data
+  }
+}
+```
