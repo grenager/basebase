@@ -17,7 +17,7 @@ interface GraphQLContext extends YogaInitialContext {
   currentUser: any | null;
 }
 
-interface AddTypeInput {
+interface createTypeInput {
   name: string;
   description?: string;
   fields: GraphQLFieldDefinition[];
@@ -57,8 +57,12 @@ const client = new MongoClient(MONGODB_URI, {
   w: "majority",
 });
 
-// Authentication mutations
+// Authentication mutations and queries
 const authTypeDefs = `
+  extend type Query {
+    getMyUser: User
+  }
+  
   extend type Mutation {
     requestCode(phone: String!, name: String!): Boolean!
     verifyCode(phone: String!, code: String!): String
@@ -74,7 +78,7 @@ const typeManagementTypeDefs = `
     isListItemRequired: Boolean
   }
 
-  input AddTypeInput {
+  input createTypeInput {
     name: String!
     description: String
     fields: [GraphQLFieldInput!]!
@@ -86,16 +90,16 @@ const typeManagementTypeDefs = `
   }
 
   extend type Mutation {
-    addType(input: AddTypeInput!): Boolean!
-    addFieldToType(input: AddFieldInput!): Boolean!
+    createType(input: createTypeInput!): Boolean!
+    createFieldOnType(input: AddFieldInput!): Boolean!
   }
 `;
 
 const typeManagementResolvers = {
   Mutation: {
-    addType: async (
+    createType: async (
       _: any,
-      { input }: { input: AddTypeInput },
+      { input }: { input: createTypeInput },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -129,13 +133,13 @@ const typeManagementResolvers = {
         result = error;
         throw error;
       } finally {
-        logger.graphql("addType", { input }, isAuthorized, result);
+        logger.graphql("createType", { input }, isAuthorized, result);
       }
 
       return result;
     },
 
-    addFieldToType: async (
+    createFieldOnType: async (
       _: any,
       { input }: { input: AddFieldInput },
       context: GraphQLContext
@@ -176,7 +180,7 @@ const typeManagementResolvers = {
         result = error;
         throw error;
       } finally {
-        logger.graphql("addFieldToType", { input }, isAuthorized, result);
+        logger.graphql("createFieldOnType", { input }, isAuthorized, result);
       }
 
       return result;
@@ -185,6 +189,36 @@ const typeManagementResolvers = {
 };
 
 const authResolvers = {
+  Query: {
+    getMyUser: async (_: any, __: any, context: GraphQLContext) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        result = context.currentUser;
+        // Transform MongoDB document to match GraphQL User type
+        if (result) {
+          result = {
+            id: result._id.toString(),
+            name: result.name,
+            phone: result.phone,
+            createdAt: result.createdAt,
+          };
+        }
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("getMyUser", {}, isAuthorized, result);
+      }
+    },
+  },
+
   Mutation: {
     requestCode: async (
       _: any,

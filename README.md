@@ -98,8 +98,8 @@ The server will be running at `http://localhost:4000/graphql` with GraphiQL inte
   - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
   - `requestCode(phone: String!, name: String!): Boolean!`: Start phone verification
   - `verifyCode(phone: String!, code: String!): String`: Verify phone and get JWT token
-  - `addType(input: AddTypeInput!): Boolean!`: Add a new GraphQL type to the schema
-  - `addFieldToType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
+  - `createType(input: createTypeInput!): Boolean!`: Add a new GraphQL type to the schema
+  - `createFieldOnType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
 
 ### Dynamic Type Management
 
@@ -109,7 +109,7 @@ The server supports dynamic type management through GraphQL mutations. These ope
 
 ```graphql
 mutation {
-  addType(
+  createType(
     input: {
       name: "Product"
       description: "A product in the system"
@@ -129,7 +129,7 @@ Available scalar types: `ID`, `String`, `Int`, `Float`, `Boolean`, `JSON`, `Date
 
 ```graphql
 mutation {
-  addFieldToType(
+  createFieldOnType(
     input: {
       typeName: "Product"
       field: {
