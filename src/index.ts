@@ -48,7 +48,13 @@ if (!MONGODB_URI) {
   throw new Error("MONGODB_URI must be defined in environment variables");
 }
 
-const client = new MongoClient(MONGODB_URI);
+const client = new MongoClient(MONGODB_URI, {
+  ssl: true,
+  tls: true,
+  tlsAllowInvalidCertificates: false,
+  retryWrites: true,
+  w: "majority",
+});
 
 // Authentication mutations
 const authTypeDefs = `
