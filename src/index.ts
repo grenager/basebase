@@ -7,11 +7,13 @@ import { createSchema } from "graphql-yoga";
 
 import { GraphQLTypeManager } from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
-import { ResolverContext } from "./defaultResolvers";
+import { AuthService } from "./services/auth";
 
-// Extend YogaInitialContext with our db
+// Extend YogaInitialContext with our db and user
 interface GraphQLContext extends YogaInitialContext {
   db: Db;
+  authService: AuthService;
+  currentUser: any | null;
 }
 
 // Load environment variables
@@ -37,14 +39,43 @@ if (!MONGODB_URI) {
 
 const client = new MongoClient(MONGODB_URI);
 
+// Authentication mutations
+const authTypeDefs = `
+  extend type Mutation {
+    startPhoneVerification(phone: String!, name: String!): Boolean!
+    verifyPhoneAndLogin(phone: String!, code: String!): String
+  }
+`;
+
+const authResolvers = {
+  Mutation: {
+    startPhoneVerification: async (
+      _: any,
+      { phone, name }: { phone: string; name: string },
+      context: GraphQLContext
+    ) => {
+      return context.authService.startPhoneVerification(phone, name);
+    },
+    verifyPhoneAndLogin: async (
+      _: any,
+      { phone, code }: { phone: string; code: string },
+      context: GraphQLContext
+    ) => {
+      return context.authService.verifyPhoneAndCreateUser(phone, code);
+    },
+  },
+};
+
 async function getDynamicSchema() {
   const db = client.db();
   const typeManager = new GraphQLTypeManager(db);
   const types = await typeManager.getGraphQLTypes();
-  const { typeDefs, resolvers } = generateSchema(types);
+  const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
+    generateSchema(types);
+
   return createSchema<GraphQLContext>({
-    typeDefs,
-    resolvers,
+    typeDefs: [generatedTypeDefs, authTypeDefs],
+    resolvers: [generatedResolvers, authResolvers],
   });
 }
 
@@ -56,10 +87,29 @@ async function startServer() {
 
     const db = client.db();
 
+    // Initialize auth service
+    const authService = new AuthService(db);
+    await authService.initialize();
+
     // Create GraphQL Yoga instance with database context
     const yoga = createYoga<GraphQLContext>({
       schema: await getDynamicSchema(),
-      context: { db },
+      context: async ({ request }) => {
+        // Extract token from Authorization header
+        const authHeader = request.headers.get("authorization");
+        let currentUser = null;
+
+        if (authHeader?.startsWith("Bearer ")) {
+          const token = authHeader.split("Bearer ")[1];
+          currentUser = await authService.getUserFromToken(token);
+        }
+
+        return {
+          db,
+          authService,
+          currentUser,
+        };
+      },
     });
 
     // Create server

@@ -21,20 +21,20 @@ async function seedTypes() {
     const typeManager = new GraphQLTypeManager(db);
     await typeManager.initialize();
 
-    // Add User type
-    await typeManager.addGraphQLType({
+    // User type definition
+    const userType = {
       name: "User",
       description: "A user in the system",
       fields: [
         { name: "id", type: "ID", isList: false, isRequired: true },
         { name: "name", type: "String", isList: false, isRequired: true },
-        { name: "email", type: "String", isList: false, isRequired: true },
+        { name: "phone", type: "String", isList: false, isRequired: true },
+        { name: "email", type: "String", isList: false, isRequired: false },
       ],
-    });
-    console.log("Added User type");
+    };
 
-    // Add App type
-    await typeManager.addGraphQLType({
+    // App type definition
+    const appType = {
       name: "App",
       description: "An application in the system",
       fields: [
@@ -42,10 +42,29 @@ async function seedTypes() {
         { name: "githubUrl", type: "String", isList: false, isRequired: true },
         { name: "ownerId", type: "ID", isList: false, isRequired: true },
       ],
-    });
-    console.log("Added App type");
+    };
 
-    // Verify the types were added
+    // Update or create User type
+    const existingUserType = await typeManager.getGraphQLTypeByName("User");
+    if (existingUserType) {
+      await typeManager.updateGraphQLType("User", userType);
+      console.log("Updated User type");
+    } else {
+      await typeManager.addGraphQLType(userType);
+      console.log("Added User type");
+    }
+
+    // Update or create App type
+    const existingAppType = await typeManager.getGraphQLTypeByName("App");
+    if (existingAppType) {
+      await typeManager.updateGraphQLType("App", appType);
+      console.log("Updated App type");
+    } else {
+      await typeManager.addGraphQLType(appType);
+      console.log("Added App type");
+    }
+
+    // Verify the types were added/updated
     const types = await typeManager.getGraphQLTypes();
     console.log(
       "Current types in database:",
