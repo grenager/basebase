@@ -207,6 +207,8 @@ const authResolvers = {
             name: result.name,
             phone: result.phone,
             createdAt: result.createdAt,
+            email: result.email || null,
+            profileImageUrl: result.profileImageUrl || null,
           };
         }
         return result;
