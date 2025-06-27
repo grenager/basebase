@@ -234,13 +234,25 @@ async function startServer() {
       },
     });
 
-    // Create server
-    const server = createServer(yoga);
+    // Create server that handles both Express and GraphQL
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url || "/", `http://${req.headers.host}`);
+
+      if (url.pathname === "/") {
+        // Handle health check with Express
+        return app(req, res);
+      }
+
+      // Handle GraphQL with Yoga
+      return yoga(req, res);
+    });
 
     // Start the server
     const PORT = process.env.PORT || 4000;
     server.listen(PORT, () => {
-      console.log(`Server is running on http://localhost:${PORT}/graphql`);
+      console.log(`Server is running on http://localhost:${PORT}`);
+      console.log(`GraphQL endpoint: http://localhost:${PORT}/graphql`);
+      console.log(`Health check: http://localhost:${PORT}/`);
     });
   } catch (error) {
     console.error("Error starting server:", error);
