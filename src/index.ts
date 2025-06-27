@@ -278,7 +278,7 @@ async function startServer() {
 
     // Create GraphQL Yoga instance with database context
     const yoga = createYoga<GraphQLContext>({
-      schema: await getDynamicSchema(),
+      schema: getDynamicSchema,
       context: async ({ request }) => {
         // Extract token from Authorization header
         const authHeader = request.headers.get("authorization");
