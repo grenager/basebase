@@ -98,6 +98,57 @@ The server will be running at `http://localhost:4000/graphql` with GraphiQL inte
   - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
   - `startPhoneVerification(phone: String!, name: String!): Boolean!`: Start phone verification
   - `verifyPhoneAndLogin(phone: String!, code: String!): String`: Verify phone and get JWT token
+  - `addType(input: AddTypeInput!): Boolean!`: Add a new GraphQL type to the schema
+  - `addFieldToType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
+
+### Dynamic Type Management
+
+The server supports dynamic type management through GraphQL mutations. These operations require authentication.
+
+#### Adding a New Type
+
+```graphql
+mutation {
+  addType(
+    input: {
+      name: "Product"
+      description: "A product in the system"
+      fields: [
+        { name: "id", type: "ID", isList: false, isRequired: true }
+        { name: "name", type: "String", isList: false, isRequired: true }
+        { name: "price", type: "Float", isList: false, isRequired: true }
+      ]
+    }
+  )
+}
+```
+
+Available scalar types: `ID`, `String`, `Int`, `Float`, `Boolean`, `JSON`, `Date`
+
+#### Adding a Field to Existing Type
+
+```graphql
+mutation {
+  addFieldToType(
+    input: {
+      typeName: "Product"
+      field: {
+        name: "description"
+        type: "String"
+        isList: false
+        isRequired: false
+      }
+    }
+  )
+}
+```
+
+Notes:
+
+- All type management operations require authentication
+- Types can reference other custom types
+- List fields support optional `isListItemRequired` for non-nullable items
+- The schema is automatically regenerated when types are modified
 
 ### Example Usage
 

@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import { createServer } from "node:http";
 import { createSchema } from "graphql-yoga";
 
-import { GraphQLTypeManager } from "./graphqlTypes";
+import { GraphQLTypeManager, GraphQLFieldDefinition } from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
 import { AuthService } from "./services/auth";
 
@@ -16,13 +16,24 @@ interface GraphQLContext extends YogaInitialContext {
   currentUser: any | null;
 }
 
+interface AddTypeInput {
+  name: string;
+  description?: string;
+  fields: GraphQLFieldDefinition[];
+}
+
+interface AddFieldInput {
+  typeName: string;
+  field: GraphQLFieldDefinition;
+}
+
 // Load environment variables
 dotenv.config();
 
 const app = express();
 
 // Health check endpoint
-app.get("/", (req, res) => {
+app.get("/", (_, res) => {
   res.json({
     status: "healthy",
     timestamp: new Date().toISOString(),
@@ -46,6 +57,111 @@ const authTypeDefs = `
     verifyPhoneAndLogin(phone: String!, code: String!): String
   }
 `;
+
+const typeManagementTypeDefs = `
+  input GraphQLFieldInput {
+    name: String!
+    type: String!
+    isList: Boolean!
+    isRequired: Boolean!
+    isListItemRequired: Boolean
+  }
+
+  input AddTypeInput {
+    name: String!
+    description: String
+    fields: [GraphQLFieldInput!]!
+  }
+
+  input AddFieldInput {
+    typeName: String!
+    field: GraphQLFieldInput!
+  }
+
+  extend type Mutation {
+    addType(input: AddTypeInput!): Boolean!
+    addFieldToType(input: AddFieldInput!): Boolean!
+  }
+`;
+
+const typeManagementResolvers = {
+  Mutation: {
+    addType: async (
+      _: any,
+      { input }: { input: AddTypeInput },
+      context: GraphQLContext
+    ) => {
+      if (!context.currentUser) {
+        throw new Error("Authentication required");
+      }
+
+      const typeManager = new GraphQLTypeManager(context.db);
+
+      // Validate field references
+      const errors = await typeManager.validateFieldReferences({
+        name: input.name,
+        description: input.description,
+        fields: input.fields,
+      });
+
+      if (errors.length > 0) {
+        throw new Error(`Validation errors: ${errors.join(", ")}`);
+      }
+
+      try {
+        await typeManager.addGraphQLType({
+          name: input.name,
+          description: input.description,
+          fields: input.fields,
+        });
+        return true;
+      } catch (error) {
+        console.error("Error adding type:", error);
+        throw new Error("Failed to add type");
+      }
+    },
+
+    addFieldToType: async (
+      _: any,
+      { input }: { input: AddFieldInput },
+      context: GraphQLContext
+    ) => {
+      if (!context.currentUser) {
+        throw new Error("Authentication required");
+      }
+
+      const typeManager = new GraphQLTypeManager(context.db);
+
+      // Check if type exists
+      const existingType = await typeManager.getGraphQLTypeByName(
+        input.typeName
+      );
+      if (!existingType) {
+        throw new Error(`Type "${input.typeName}" not found`);
+      }
+
+      // Validate the new field
+      const errors = await typeManager.validateFieldReferences({
+        name: existingType.name,
+        fields: [...existingType.fields, input.field],
+      });
+
+      if (errors.length > 0) {
+        throw new Error(`Validation errors: ${errors.join(", ")}`);
+      }
+
+      try {
+        await typeManager.updateGraphQLType(input.typeName, {
+          fields: [...existingType.fields, input.field],
+        });
+        return true;
+      } catch (error) {
+        console.error("Error adding field to type:", error);
+        throw new Error("Failed to add field to type");
+      }
+    },
+  },
+};
 
 const authResolvers = {
   Mutation: {
@@ -74,8 +190,8 @@ async function getDynamicSchema() {
     generateSchema(types);
 
   return createSchema<GraphQLContext>({
-    typeDefs: [generatedTypeDefs, authTypeDefs],
-    resolvers: [generatedResolvers, authResolvers],
+    typeDefs: [generatedTypeDefs, authTypeDefs, typeManagementTypeDefs],
+    resolvers: [generatedResolvers, authResolvers, typeManagementResolvers],
   });
 }
 

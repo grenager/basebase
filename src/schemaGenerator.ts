@@ -57,7 +57,6 @@ export function generateSchema(types: GraphQLTypeDefinition[]) {
   // Generate Query type
   const queryFields = types
     .map((type) => {
-      const pluralName = `${type.name.toLowerCase()}s`; // Simple pluralization
       return `  get${type.name}(id: ID!): ${type.name}
   getAll${type.name}s: [${type.name}!]!`;
     })
