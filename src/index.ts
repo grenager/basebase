@@ -60,8 +60,8 @@ const client = new MongoClient(MONGODB_URI, {
 // Authentication mutations
 const authTypeDefs = `
   extend type Mutation {
-    startPhoneVerification(phone: String!, name: String!): Boolean!
-    verifyPhoneAndLogin(phone: String!, code: String!): String
+    requestCode(phone: String!, name: String!): Boolean!
+    verifyCode(phone: String!, code: String!): String
   }
 `;
 
@@ -186,20 +186,20 @@ const typeManagementResolvers = {
 
 const authResolvers = {
   Mutation: {
-    startPhoneVerification: async (
+    requestCode: async (
       _: any,
       { phone, name }: { phone: string; name: string },
       context: GraphQLContext
     ) => {
       let result;
       try {
-        result = await context.authService.startPhoneVerification(phone, name);
+        result = await context.authService.requestCode(phone, name);
       } catch (error) {
         result = error;
         throw error;
       } finally {
         logger.graphql(
-          "startPhoneVerification",
+          "requestCode",
           { phone, name },
           true, // Auth not required for this mutation
           result
@@ -208,7 +208,7 @@ const authResolvers = {
       return result;
     },
 
-    verifyPhoneAndLogin: async (
+    verifyCode: async (
       _: any,
       { phone, code }: { phone: string; code: string },
       context: GraphQLContext
@@ -224,7 +224,7 @@ const authResolvers = {
         throw error;
       } finally {
         logger.graphql(
-          "verifyPhoneAndLogin",
+          "verifyCode",
           { phone, code: "[REDACTED]" },
           true, // Auth not required for this mutation
           result

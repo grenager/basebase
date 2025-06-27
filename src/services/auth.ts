@@ -87,7 +87,7 @@ export class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  async startPhoneVerification(phone: string, name: string): Promise<boolean> {
+  async requestCode(phone: string, name: string): Promise<boolean> {
     if (!twilioClient) {
       throw new Error(
         "Twilio is not properly configured. Please check environment variables."

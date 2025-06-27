@@ -43,7 +43,7 @@ New users need to verify their phone number to get a JWT token. This is a two-st
 
 ```graphql
 mutation {
-  startPhoneVerification(phone: "+1234567890", name: "John Doe")
+  requestCode(phone: "+1234567890", name: "John Doe")
 }
 ```
 
@@ -53,7 +53,7 @@ This will send a 6-digit code to the provided phone number via SMS.
 
 ```graphql
 mutation {
-  verifyPhoneAndLogin(
+  verifyCode(
     phone: "+1234567890"
     code: "123456" # The code you received via SMS
   )
@@ -96,8 +96,8 @@ The server will be running at `http://localhost:4000/graphql` with GraphiQL inte
   - `createDocument(collection: String!, data: JSON!): Document!`: Create a new document
   - `updateDocument(collection: String!, id: ID!, data: JSON!): Document`: Update an existing document
   - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
-  - `startPhoneVerification(phone: String!, name: String!): Boolean!`: Start phone verification
-  - `verifyPhoneAndLogin(phone: String!, code: String!): String`: Verify phone and get JWT token
+  - `requestCode(phone: String!, name: String!): Boolean!`: Start phone verification
+  - `verifyCode(phone: String!, code: String!): String`: Verify phone and get JWT token
   - `addType(input: AddTypeInput!): Boolean!`: Add a new GraphQL type to the schema
   - `addFieldToType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
 
