@@ -91,7 +91,8 @@ ${mutationFields}
 
   // Add resolvers for each type
   types.forEach((type) => {
-    const collectionName = type.name.toLowerCase();
+    // Use plural form for collection names
+    const collectionName = `${type.name.toLowerCase()}s`;
 
     // Query resolvers
     Object.assign(resolvers.Query, {

@@ -1,5 +1,5 @@
 import express from "express";
-import { createYoga, YogaInitialContext } from "graphql-yoga";
+import { createYoga, YogaInitialContext, MaskError } from "graphql-yoga";
 import { MongoClient, Db } from "mongodb";
 import dotenv from "dotenv";
 import { createServer } from "node:http";
@@ -8,6 +8,7 @@ import { createSchema } from "graphql-yoga";
 import { GraphQLTypeManager, GraphQLFieldDefinition } from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
 import { AuthService } from "./services/auth";
+import { logger } from "./utils/logger";
 
 // Extend YogaInitialContext with our db and user
 interface GraphQLContext extends YogaInitialContext {
@@ -97,34 +98,41 @@ const typeManagementResolvers = {
       { input }: { input: AddTypeInput },
       context: GraphQLContext
     ) => {
-      if (!context.currentUser) {
-        throw new Error("Authentication required");
-      }
-
-      const typeManager = new GraphQLTypeManager(context.db);
-
-      // Validate field references
-      const errors = await typeManager.validateFieldReferences({
-        name: input.name,
-        description: input.description,
-        fields: input.fields,
-      });
-
-      if (errors.length > 0) {
-        throw new Error(`Validation errors: ${errors.join(", ")}`);
-      }
+      const isAuthorized = !!context.currentUser;
+      let result;
 
       try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        const typeManager = new GraphQLTypeManager(context.db);
+
+        // Validate field references
+        const errors = await typeManager.validateFieldReferences({
+          name: input.name,
+          description: input.description,
+          fields: input.fields,
+        });
+
+        if (errors.length > 0) {
+          throw new Error(`Validation errors: ${errors.join(", ")}`);
+        }
+
         await typeManager.addGraphQLType({
           name: input.name,
           description: input.description,
           fields: input.fields,
         });
-        return true;
+        result = true;
       } catch (error) {
-        console.error("Error adding type:", error);
-        throw new Error("Failed to add type");
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("addType", { input }, isAuthorized, result);
       }
+
+      return result;
     },
 
     addFieldToType: async (
@@ -132,39 +140,46 @@ const typeManagementResolvers = {
       { input }: { input: AddFieldInput },
       context: GraphQLContext
     ) => {
-      if (!context.currentUser) {
-        throw new Error("Authentication required");
-      }
-
-      const typeManager = new GraphQLTypeManager(context.db);
-
-      // Check if type exists
-      const existingType = await typeManager.getGraphQLTypeByName(
-        input.typeName
-      );
-      if (!existingType) {
-        throw new Error(`Type "${input.typeName}" not found`);
-      }
-
-      // Validate the new field
-      const errors = await typeManager.validateFieldReferences({
-        name: existingType.name,
-        fields: [...existingType.fields, input.field],
-      });
-
-      if (errors.length > 0) {
-        throw new Error(`Validation errors: ${errors.join(", ")}`);
-      }
+      const isAuthorized = !!context.currentUser;
+      let result;
 
       try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        const typeManager = new GraphQLTypeManager(context.db);
+
+        // Check if type exists
+        const existingType = await typeManager.getGraphQLTypeByName(
+          input.typeName
+        );
+        if (!existingType) {
+          throw new Error(`Type "${input.typeName}" not found`);
+        }
+
+        // Validate the new field
+        const errors = await typeManager.validateFieldReferences({
+          name: existingType.name,
+          fields: [...existingType.fields, input.field],
+        });
+
+        if (errors.length > 0) {
+          throw new Error(`Validation errors: ${errors.join(", ")}`);
+        }
+
         await typeManager.updateGraphQLType(input.typeName, {
           fields: [...existingType.fields, input.field],
         });
-        return true;
+        result = true;
       } catch (error) {
-        console.error("Error adding field to type:", error);
-        throw new Error("Failed to add field to type");
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("addFieldToType", { input }, isAuthorized, result);
       }
+
+      return result;
     },
   },
 };
@@ -176,14 +191,46 @@ const authResolvers = {
       { phone, name }: { phone: string; name: string },
       context: GraphQLContext
     ) => {
-      return context.authService.startPhoneVerification(phone, name);
+      let result;
+      try {
+        result = await context.authService.startPhoneVerification(phone, name);
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "startPhoneVerification",
+          { phone, name },
+          true, // Auth not required for this mutation
+          result
+        );
+      }
+      return result;
     },
+
     verifyPhoneAndLogin: async (
       _: any,
       { phone, code }: { phone: string; code: string },
       context: GraphQLContext
     ) => {
-      return context.authService.verifyPhoneAndCreateUser(phone, code);
+      let result;
+      try {
+        result = await context.authService.verifyPhoneAndCreateUser(
+          phone,
+          code
+        );
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "verifyPhoneAndLogin",
+          { phone, code: "[REDACTED]" },
+          true, // Auth not required for this mutation
+          result
+        );
+      }
+      return result;
     },
   },
 };
@@ -191,6 +238,22 @@ const authResolvers = {
 async function getDynamicSchema() {
   const db = client.db();
   const typeManager = new GraphQLTypeManager(db);
+
+  // Ensure User type exists
+  const userType = await typeManager.getGraphQLTypeByName("User");
+  if (!userType) {
+    await typeManager.addGraphQLType({
+      name: "User",
+      description: "A user in the system",
+      fields: [
+        { name: "id", type: "ID", isList: false, isRequired: true },
+        { name: "name", type: "String", isList: false, isRequired: true },
+        { name: "phone", type: "String", isList: false, isRequired: true },
+        { name: "createdAt", type: "Date", isList: false, isRequired: true },
+      ],
+    });
+  }
+
   const types = await typeManager.getGraphQLTypes();
   const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
     generateSchema(types);
@@ -231,6 +294,21 @@ async function startServer() {
           authService,
           currentUser,
         };
+      },
+      maskedErrors: {
+        maskError: ((error: Error) => {
+          // Handle authentication errors specifically
+          if (error.message === "Authentication required") {
+            return {
+              message: error.message,
+              extensions: {
+                code: "UNAUTHENTICATED",
+              },
+            };
+          }
+          // Let other errors pass through as internal errors
+          return error;
+        }) as MaskError,
       },
     });
 

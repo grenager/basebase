@@ -70,6 +70,17 @@ export class AuthService {
       { phone: 1 },
       { unique: true }
     );
+
+    // Ensure users collection has the correct indexes
+    const usersCollection = this.db.collection("users");
+    // Drop any existing email index if it exists
+    try {
+      await usersCollection.dropIndex("email_1");
+    } catch (error) {
+      // Index might not exist, that's fine
+    }
+    // Create unique index on phone for users
+    await usersCollection.createIndex({ phone: 1 }, { unique: true });
   }
 
   generateVerificationCode(): string {
@@ -131,20 +142,39 @@ export class AuthService {
     }
 
     try {
-      // Create user
-      const result = await this.db.collection("users").insertOne({
-        name: attempt.name,
-        phone,
-        createdAt: new Date(),
-      });
+      // Check if user already exists
+      const existingUser = await this.db.collection("users").findOne({ phone });
+
+      let userId: string;
+      if (existingUser) {
+        // User exists, use their ID
+        userId = existingUser._id.toString();
+        // Optionally update their name if it changed
+        if (existingUser.name !== attempt.name) {
+          await this.db
+            .collection("users")
+            .updateOne(
+              { _id: existingUser._id },
+              { $set: { name: attempt.name } }
+            );
+        }
+      } else {
+        // Create new user
+        const result = await this.db.collection("users").insertOne({
+          name: attempt.name,
+          phone,
+          createdAt: new Date(),
+        });
+        userId = result.insertedId.toString();
+      }
 
       // Delete verification attempt
       await this.verificationAttemptsCollection.deleteOne({ phone });
 
       // Generate JWT
-      return this.generateToken(result.insertedId.toString());
+      return this.generateToken(userId);
     } catch (error) {
-      console.error("Error creating user:", error);
+      console.error("Error creating/updating user:", error);
       return null;
     }
   }
