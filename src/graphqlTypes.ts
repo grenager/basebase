@@ -13,9 +13,11 @@ export type GraphQLScalarType =
 export interface GraphQLFieldDefinition {
   name: string;
   type: GraphQLScalarType | string; // string for custom types
+  description?: string; // Field description for GraphQL documentation
   isList: boolean;
   isRequired: boolean;
   isListItemRequired?: boolean; // For [String!] vs [String]
+  refType?: string; // For ID fields, specifies the referenced type
 }
 
 export interface GraphQLTypeDefinition {
@@ -113,9 +115,23 @@ export class GraphQLTypeManager {
         .map((field) => field.type)
     );
 
+    // Check custom type references
     for (const customType of customTypes) {
       if (!(await this.typeExists(customType))) {
         errors.push(`Referenced type "${customType}" does not exist`);
+      }
+    }
+
+    // Check refType references
+    const refTypes = new Set(
+      type.fields
+        .filter((field) => field.refType)
+        .map((field) => field.refType!)
+    );
+
+    for (const refType of refTypes) {
+      if (!(await this.typeExists(refType))) {
+        errors.push(`Referenced type "${refType}" in refType does not exist`);
       }
     }
 
@@ -124,7 +140,7 @@ export class GraphQLTypeManager {
 }
 
 // Helper function to check if a type is a scalar
-function isScalarType(type: string): boolean {
+export function isScalarType(type: string): boolean {
   const scalarTypes: GraphQLScalarType[] = [
     "ID",
     "String",
@@ -137,6 +153,11 @@ function isScalarType(type: string): boolean {
   return scalarTypes.includes(type as GraphQLScalarType);
 }
 
+// Helper function to check if a type is a custom type (references another GraphQL type)
+export function isCustomType(type: string): boolean {
+  return !isScalarType(type);
+}
+
 // Example usage:
 /*
 const typeManager = new GraphQLTypeManager(db);
@@ -147,10 +168,28 @@ await typeManager.addGraphQLType({
   name: 'User',
   description: 'A user in the system',
   fields: [
-    { name: 'id', type: 'ID', isList: false, isRequired: true },
-    { name: 'email', type: 'String', isList: false, isRequired: true },
-    { name: 'name', type: 'String', isList: false, isRequired: true },
-    { name: 'posts', type: 'Post', isList: true, isRequired: true, isListItemRequired: true }
+    { name: 'id', type: 'ID', description: 'Unique user identifier', isList: false, isRequired: true },
+    { name: 'email', type: 'String', description: 'User email address', isList: false, isRequired: true },
+    { name: 'name', type: 'String', description: 'Full name of the user', isList: false, isRequired: true },
+    { name: 'posts', type: 'Post', description: 'All posts authored by this user', isList: true, isRequired: true, isListItemRequired: true },
+    { name: 'friends', type: 'User', description: 'List of friends', isList: true, isRequired: false, isListItemRequired: false }
   ]
 });
+
+// Define a Post type with foreign key to User
+await typeManager.addGraphQLType({
+  name: 'Post',
+  description: 'A blog post',
+  fields: [
+    { name: 'id', type: 'ID', description: 'Unique post identifier', isList: false, isRequired: true },
+    { name: 'title', type: 'String', description: 'Post title', isList: false, isRequired: true },
+    { name: 'content', type: 'String', description: 'Post content in markdown', isList: false, isRequired: true },
+    { name: 'author', type: 'User', description: 'The user who authored this post', isList: false, isRequired: true }
+  ]
+});
+
+// When creating a Post:
+// - GraphQL input expects: { title: "Hello", content: "...", author: "60d5ec49eb36d73a7c7b1234" }
+// - MongoDB stores: { title: "Hello", content: "...", author: ObjectId("60d5ec49eb36d73a7c7b1234") }
+// - GraphQL output returns: { id: "...", title: "Hello", content: "...", author: { id: "60d5ec49eb36d73a7c7b1234", name: "John", email: "..." } }
 */

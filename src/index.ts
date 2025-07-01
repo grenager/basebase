@@ -70,27 +70,77 @@ const authTypeDefs = `
 `;
 
 const typeManagementTypeDefs = `
+  """
+  Input type for defining a GraphQL field with its properties and metadata
+  """
   input GraphQLFieldInput {
+    "The name of the field"
     name: String!
+    
+    "The GraphQL type (ID, String, Int, Boolean, Date, or custom type name)"
     type: String!
+    
+    "Optional description that will appear in the GraphQL schema documentation"
+    description: String
+    
+    "Whether this field returns a list/array of values"
     isList: Boolean!
+    
+    "Whether this field is required (non-null)"
     isRequired: Boolean!
+    
+    "For list fields, whether individual list items are required (non-null)"
     isListItemRequired: Boolean
+    
+    "For ID fields, specifies which type this ID references (foreign key relationship)"
+    refType: String
   }
 
+  """
+  Input for creating a new GraphQL type with its fields
+  """
   input createTypeInput {
+    "The name of the new type (must be unique)"
     name: String!
+    
+    "Optional description for the type that will appear in schema documentation"
     description: String
+    
+    "Array of field definitions for this type"
     fields: [GraphQLFieldInput!]!
   }
 
+  """
+  Input for adding a new field to an existing GraphQL type
+  """
   input AddFieldInput {
+    "The name of the existing type to add the field to"
     typeName: String!
+    
+    "The field definition to add"
     field: GraphQLFieldInput!
   }
 
   extend type Mutation {
+    """
+    Creates a new GraphQL type with the specified fields.
+    
+    This mutation dynamically adds a new type to your GraphQL schema, complete with
+    auto-generated CRUD operations (queries and mutations). The type becomes immediately
+    available for use in your API.
+    
+    Requires authentication.
+    """
     createType(input: createTypeInput!): Boolean!
+    
+    """
+    Adds a new field to an existing GraphQL type.
+    
+    This mutation allows you to extend existing types with additional fields.
+    All field references and foreign key relationships are validated before adding.
+    
+    Requires authentication.
+    """
     createFieldOnType(input: AddFieldInput!): Boolean!
   }
 `;

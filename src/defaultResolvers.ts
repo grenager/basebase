@@ -1,13 +1,101 @@
 import { Db, ObjectId } from "mongodb";
 import { logger } from "./utils/logger";
+import { GraphQLTypeDefinition, isCustomType } from "./graphqlTypes";
 
 export interface ResolverContext {
   db: Db;
   currentUser?: any;
 }
 
+// Helper function to convert custom type fields to ObjectIds for storage
+function convertToObjectIds(
+  data: Record<string, any>,
+  typeDefinition: GraphQLTypeDefinition
+): Record<string, any> {
+  const converted = { ...data };
+
+  for (const field of typeDefinition.fields) {
+    if (field.name in converted && isCustomType(field.type)) {
+      const value = converted[field.name];
+
+      if (field.isList) {
+        // Handle array of IDs
+        if (Array.isArray(value)) {
+          converted[field.name] = value.map((id: string) => new ObjectId(id));
+        }
+      } else {
+        // Handle single ID
+        if (value) {
+          converted[field.name] = new ObjectId(value);
+        }
+      }
+    }
+  }
+
+  return converted;
+}
+
+// Helper function to populate ObjectIds with full objects for retrieval
+async function populateReferences(
+  document: Record<string, any>,
+  typeDefinition: GraphQLTypeDefinition,
+  db: Db
+): Promise<Record<string, any>> {
+  const populated = { ...document };
+
+  for (const field of typeDefinition.fields) {
+    if (field.name in populated && isCustomType(field.type)) {
+      const value = populated[field.name];
+      const referencedCollection = `${field.type.toLowerCase()}s`;
+
+      if (field.isList) {
+        // Handle array of ObjectIds
+        if (Array.isArray(value) && value.length > 0) {
+          const objectIds = value.filter((id) => ObjectId.isValid(id));
+          if (objectIds.length > 0) {
+            const referencedDocs = await db
+              .collection(referencedCollection)
+              .find({ _id: { $in: objectIds } })
+              .toArray();
+
+            populated[field.name] = referencedDocs.map((doc) => {
+              const { _id, ...docWithoutId } = doc;
+              return {
+                id: _id.toString(),
+                ...docWithoutId,
+              };
+            });
+          }
+        }
+      } else {
+        // Handle single ObjectId
+        if (value && ObjectId.isValid(value)) {
+          const referencedDoc = await db
+            .collection(referencedCollection)
+            .findOne({ _id: value });
+
+          if (referencedDoc) {
+            const { _id, ...docWithoutId } = referencedDoc;
+            populated[field.name] = {
+              id: _id.toString(),
+              ...docWithoutId,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return populated;
+}
+
 export const defaultResolvers = {
-  async getDocument(collection: string, id: string, context: ResolverContext) {
+  async getDocument(
+    collection: string,
+    id: string,
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
+  ) {
     const operation = `get${
       collection.charAt(0).toUpperCase() + collection.slice(1)
     }`;
@@ -23,10 +111,19 @@ export const defaultResolvers = {
         _id: new ObjectId(id),
       });
       if (!result) return null;
+
+      // Convert _id to id and remove _id field
+      const { _id, ...docWithoutId } = result;
       result = {
-        id: result._id.toString(),
-        ...result,
+        id: _id.toString(),
+        ...docWithoutId,
       };
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await populateReferences(result, typeDefinition, context.db);
+      }
+
       return result;
     } catch (error) {
       result = error;
@@ -36,7 +133,11 @@ export const defaultResolvers = {
     }
   },
 
-  async getDocuments(collection: string, context: ResolverContext) {
+  async getDocuments(
+    collection: string,
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
+  ) {
     const operation = `getAll${
       collection.charAt(0).toUpperCase() + collection.slice(1)
     }s`;
@@ -49,10 +150,23 @@ export const defaultResolvers = {
       }
 
       const docs = await context.db.collection(collection).find().toArray();
-      result = docs.map((doc) => ({
-        id: doc._id.toString(),
-        ...doc,
-      }));
+      result = docs.map((doc) => {
+        const { _id, ...docWithoutId } = doc;
+        return {
+          id: _id.toString(),
+          ...docWithoutId,
+        };
+      });
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await Promise.all(
+          result.map((doc) =>
+            populateReferences(doc, typeDefinition, context.db)
+          )
+        );
+      }
+
       return result;
     } catch (error) {
       result = error;
@@ -65,7 +179,8 @@ export const defaultResolvers = {
   async createDocument(
     collection: string,
     data: Record<string, any>,
-    context: ResolverContext
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
   ) {
     const operation = `create${
       collection.charAt(0).toUpperCase() + collection.slice(1)
@@ -79,13 +194,26 @@ export const defaultResolvers = {
       }
 
       const { id, ...insertData } = data; // Remove id if present
+
+      // Convert custom type fields to ObjectIds for storage
+      const convertedData = typeDefinition
+        ? convertToObjectIds(insertData, typeDefinition)
+        : insertData;
+
       const dbResult = await context.db
         .collection(collection)
-        .insertOne(insertData);
+        .insertOne(convertedData);
+
       result = {
         id: dbResult.insertedId.toString(),
-        ...insertData,
+        ...insertData, // Return original data format for GraphQL response
       };
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await populateReferences(result, typeDefinition, context.db);
+      }
+
       return result;
     } catch (error) {
       result = error;
@@ -99,7 +227,8 @@ export const defaultResolvers = {
     collection: string,
     id: string,
     data: Record<string, any>,
-    context: ResolverContext
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
   ) {
     const operation = `update${
       collection.charAt(0).toUpperCase() + collection.slice(1)
@@ -113,18 +242,34 @@ export const defaultResolvers = {
       }
 
       const { id: _, ...updateData } = data; // Remove id if present
+
+      // Convert custom type fields to ObjectIds for storage
+      const convertedData = typeDefinition
+        ? convertToObjectIds(updateData, typeDefinition)
+        : updateData;
+
       const dbResult = await context.db
         .collection(collection)
         .findOneAndUpdate(
           { _id: new ObjectId(id) },
-          { $set: updateData },
+          { $set: convertedData },
           { returnDocument: "after" }
         );
+
       if (!dbResult) return null;
+
+      // Convert _id to id and remove _id field
+      const { _id, ...docWithoutId } = dbResult;
       result = {
-        id: dbResult._id.toString(),
-        ...dbResult,
+        id: _id.toString(),
+        ...docWithoutId,
       };
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await populateReferences(result, typeDefinition, context.db);
+      }
+
       return result;
     } catch (error) {
       result = error;

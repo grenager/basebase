@@ -1,4 +1,8 @@
-import { GraphQLTypeDefinition, GraphQLFieldDefinition } from "./graphqlTypes";
+import {
+  GraphQLTypeDefinition,
+  GraphQLFieldDefinition,
+  isCustomType,
+} from "./graphqlTypes";
 import { defaultResolvers, ResolverContext } from "./defaultResolvers";
 
 function generateInputType(
@@ -8,8 +12,14 @@ function generateInputType(
   const inputFields = fields
     .filter((field) => field.name !== "id") // Exclude id field for inputs
     .map((field) => {
-      const typeString = generateTypeString(field, true);
-      return `  ${field.name}: ${typeString}`;
+      // For input types, convert custom types to ID
+      const inputField = isCustomType(field.type)
+        ? { ...field, type: "ID" }
+        : field;
+
+      const typeString = generateTypeString(inputField, true);
+      const description = field.description ? `  "${field.description}"\n` : "";
+      return `${description}  ${field.name}: ${typeString}`;
     })
     .join("\n");
 
@@ -37,14 +47,21 @@ function generateObjectType(type: GraphQLTypeDefinition): string {
   const fields = type.fields
     .map((field) => {
       const typeString = generateTypeString(field);
-      return `  ${field.name}: ${typeString}`;
+      const description = field.description ? `  "${field.description}"\n` : "";
+      return `${description}  ${field.name}: ${typeString}`;
     })
     .join("\n");
 
-  return `type ${type.name} {\n${fields}\n}`;
+  const typeDescription = type.description ? `"${type.description}"\n` : "";
+
+  return `${typeDescription}type ${type.name} {\n${fields}\n}`;
 }
 
 export function generateSchema(types: GraphQLTypeDefinition[]) {
+  // Create a map for quick type lookup
+  const typeMap = new Map<string, GraphQLTypeDefinition>();
+  types.forEach((type) => typeMap.set(type.name, type));
+
   // Generate type definitions
   let typeDefsArray = types
     .map((type) => [
@@ -101,14 +118,14 @@ ${mutationFields}
         { id }: { id: string },
         context: ResolverContext
       ) => {
-        return defaultResolvers.getDocument(collectionName, id, context);
+        return defaultResolvers.getDocument(collectionName, id, context, type);
       },
       [`getAll${type.name}s`]: async (
         _: any,
         __: any,
         context: ResolverContext
       ) => {
-        return defaultResolvers.getDocuments(collectionName, context);
+        return defaultResolvers.getDocuments(collectionName, context, type);
       },
     });
 
@@ -119,7 +136,12 @@ ${mutationFields}
         { input }: { input: Record<string, any> },
         context: ResolverContext
       ) => {
-        return defaultResolvers.createDocument(collectionName, input, context);
+        return defaultResolvers.createDocument(
+          collectionName,
+          input,
+          context,
+          type
+        );
       },
       [`update${type.name}`]: async (
         _: any,
@@ -130,7 +152,8 @@ ${mutationFields}
           collectionName,
           id,
           input,
-          context
+          context,
+          type
         );
       },
     });
