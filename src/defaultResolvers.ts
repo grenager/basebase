@@ -1,10 +1,12 @@
 import { Db, ObjectId } from "mongodb";
 import { logger } from "./utils/logger";
 import { GraphQLTypeDefinition, isCustomType } from "./graphqlTypes";
+import { AuthorizationService } from "./services/authorization";
 
 export interface ResolverContext {
   db: Db;
   currentUser?: any;
+  authorizationService: AuthorizationService;
 }
 
 // Helper function to convert custom type fields to ObjectIds for storage
@@ -111,6 +113,21 @@ export const defaultResolvers = {
         _id: new ObjectId(id),
       });
       if (!result) return null;
+
+      // Check authorization
+      const ability = context.authorizationService.buildAbilityForUser(
+        context.currentUser
+      );
+      const subject =
+        collection.charAt(0).toUpperCase() + collection.slice(1, -1); // Convert "users" to "User"
+
+      context.authorizationService.assertPermission(
+        ability,
+        "read",
+        subject as any,
+        result,
+        context.currentUser
+      );
 
       // Convert _id to id and remove _id field
       const { _id, ...docWithoutId } = result;
@@ -250,6 +267,30 @@ export const defaultResolvers = {
       if (!isAuthorized) {
         throw new Error("Authentication required");
       }
+
+      // First, get the existing document to check permissions
+      const existingDoc = await context.db.collection(collection).findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!existingDoc) {
+        throw new Error("Document not found");
+      }
+
+      // Check authorization
+      const ability = context.authorizationService.buildAbilityForUser(
+        context.currentUser
+      );
+      const subject =
+        collection.charAt(0).toUpperCase() + collection.slice(1, -1); // Convert "users" to "User"
+
+      context.authorizationService.assertPermission(
+        ability,
+        "update",
+        subject as any,
+        existingDoc,
+        context.currentUser
+      );
 
       const { id: _, ...updateData } = data; // Remove id if present
 
@@ -404,6 +445,60 @@ export const defaultResolvers = {
       throw error;
     } finally {
       logger.graphql(operation, { id, itemId }, isAuthorized, result);
+    }
+  },
+
+  async deleteDocument(
+    collection: string,
+    id: string,
+    context: ResolverContext
+  ) {
+    const operation = `delete${
+      collection.charAt(0).toUpperCase() + collection.slice(1)
+    }`;
+    const isAuthorized = !!context.currentUser;
+    let result;
+
+    try {
+      if (!isAuthorized) {
+        throw new Error("Authentication required");
+      }
+
+      // First, get the existing document to check permissions
+      const existingDoc = await context.db.collection(collection).findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!existingDoc) {
+        throw new Error("Document not found");
+      }
+
+      // Check authorization
+      const ability = context.authorizationService.buildAbilityForUser(
+        context.currentUser
+      );
+      const subject =
+        collection.charAt(0).toUpperCase() + collection.slice(1, -1); // Convert "users" to "User"
+
+      context.authorizationService.assertPermission(
+        ability,
+        "delete",
+        subject as any,
+        existingDoc,
+        context.currentUser
+      );
+
+      const deleteResult = await context.db.collection(collection).deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      result = deleteResult.deletedCount === 1;
+      return result;
+    } catch (error) {
+      result = error;
+      throw error;
+    } finally {
+      logger.graphql(operation, { id }, isAuthorized, result);
     }
   },
 };

@@ -8,12 +8,14 @@ import { createSchema } from "graphql-yoga";
 import { GraphQLTypeManager, GraphQLFieldDefinition } from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
 import { AuthService } from "./services/auth";
+import { AuthorizationService } from "./services/authorization";
 import { logger } from "./utils/logger";
 
 // Extend YogaInitialContext with our db and user
 interface GraphQLContext extends YogaInitialContext {
   db: Db;
   authService: AuthService;
+  authorizationService: AuthorizationService;
   currentUser: any | null;
 }
 
@@ -142,6 +144,61 @@ const typeManagementTypeDefs = `
     Requires authentication.
     """
     createFieldOnType(input: AddFieldInput!): Boolean!
+  }
+`;
+
+const authorizationTypeDefs = `
+  """
+  Authorization rule for managing access to resources
+  """
+  type AuthorizationRule {
+    id: ID!
+    name: String!
+    description: String
+    action: String!
+    subject: String!
+    conditions: String
+    priority: Int!
+    isActive: Boolean!
+    createdAt: String!
+    updatedAt: String!
+  }
+
+  """
+  Input for creating an authorization rule
+  """
+  input CreateAuthorizationRuleInput {
+    name: String!
+    description: String
+    action: String!
+    subject: String!
+    conditions: String
+    priority: Int!
+    isActive: Boolean!
+  }
+
+  extend type Query {
+    """
+    Get all authorization rules
+    """
+    getAuthorizationRules: [AuthorizationRule!]!
+  }
+
+  extend type Mutation {
+    """
+    Create a new authorization rule
+    """
+    createAuthorizationRule(input: CreateAuthorizationRuleInput!): AuthorizationRule!
+    
+    """
+    Update an existing authorization rule
+    """
+    updateAuthorizationRule(name: String!, input: CreateAuthorizationRuleInput!): AuthorizationRule
+    
+    """
+    Delete an authorization rule
+    """
+    deleteAuthorizationRule(name: String!): Boolean!
   }
 `;
 
@@ -355,6 +412,172 @@ const authResolvers = {
   },
 };
 
+const authorizationResolvers = {
+  Query: {
+    getAuthorizationRules: async (_: any, __: any, context: GraphQLContext) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        const rules = await context.authorizationService.getRules();
+        result = rules.map((rule) => ({
+          id: rule._id?.toString(),
+          name: rule.name,
+          description: rule.description,
+          action: rule.action,
+          subject: rule.subject,
+          conditions: rule.conditions ? JSON.stringify(rule.conditions) : null,
+          priority: rule.priority,
+          isActive: rule.isActive,
+          createdAt: rule.createdAt.toISOString(),
+          updatedAt: rule.updatedAt.toISOString(),
+        }));
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("getAuthorizationRules", {}, isAuthorized, result);
+      }
+    },
+  },
+
+  Mutation: {
+    createAuthorizationRule: async (
+      _: any,
+      { input }: { input: any },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        // Parse conditions string to object if provided
+        const ruleInput = {
+          ...input,
+          conditions: input.conditions
+            ? JSON.parse(input.conditions)
+            : undefined,
+        };
+
+        const rule = await context.authorizationService.createRule(ruleInput);
+        result = {
+          id: rule._id?.toString(),
+          name: rule.name,
+          description: rule.description,
+          action: rule.action,
+          subject: rule.subject,
+          conditions: rule.conditions ? JSON.stringify(rule.conditions) : null,
+          priority: rule.priority,
+          isActive: rule.isActive,
+          createdAt: rule.createdAt.toISOString(),
+          updatedAt: rule.updatedAt.toISOString(),
+        };
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "createAuthorizationRule",
+          { input },
+          isAuthorized,
+          result
+        );
+      }
+    },
+
+    updateAuthorizationRule: async (
+      _: any,
+      { name, input }: { name: string; input: any },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        // Parse conditions string to object if provided
+        const ruleInput = {
+          ...input,
+          conditions: input.conditions
+            ? JSON.parse(input.conditions)
+            : undefined,
+        };
+
+        const rule = await context.authorizationService.updateRule(
+          name,
+          ruleInput
+        );
+        if (!rule) return null;
+
+        result = {
+          id: rule._id?.toString(),
+          name: rule.name,
+          description: rule.description,
+          action: rule.action,
+          subject: rule.subject,
+          conditions: rule.conditions ? JSON.stringify(rule.conditions) : null,
+          priority: rule.priority,
+          isActive: rule.isActive,
+          createdAt: rule.createdAt.toISOString(),
+          updatedAt: rule.updatedAt.toISOString(),
+        };
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "updateAuthorizationRule",
+          { name, input },
+          isAuthorized,
+          result
+        );
+      }
+    },
+
+    deleteAuthorizationRule: async (
+      _: any,
+      { name }: { name: string },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized) {
+          throw new Error("Authentication required");
+        }
+
+        result = await context.authorizationService.deleteRule(name);
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "deleteAuthorizationRule",
+          { name },
+          isAuthorized,
+          result
+        );
+      }
+    },
+  },
+};
+
 async function getDynamicSchema() {
   const db = client.db();
   const typeManager = new GraphQLTypeManager(db);
@@ -380,8 +603,18 @@ async function getDynamicSchema() {
     generateSchema(types);
 
   return createSchema<GraphQLContext>({
-    typeDefs: [generatedTypeDefs, authTypeDefs, typeManagementTypeDefs],
-    resolvers: [generatedResolvers, authResolvers, typeManagementResolvers],
+    typeDefs: [
+      generatedTypeDefs,
+      authTypeDefs,
+      typeManagementTypeDefs,
+      authorizationTypeDefs,
+    ],
+    resolvers: [
+      generatedResolvers,
+      authResolvers,
+      typeManagementResolvers,
+      authorizationResolvers,
+    ],
   });
 }
 
@@ -396,6 +629,10 @@ async function startServer() {
     // Initialize auth service
     const authService = new AuthService(db);
     await authService.initialize();
+
+    // Initialize authorization service
+    const authorizationService = new AuthorizationService(db);
+    await authorizationService.initialize();
 
     // Create GraphQL Yoga instance with database context
     const yoga = createYoga<GraphQLContext>({
@@ -413,6 +650,7 @@ async function startServer() {
         return {
           db,
           authService,
+          authorizationService,
           currentUser,
         };
       },
