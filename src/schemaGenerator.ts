@@ -82,8 +82,32 @@ export function generateSchema(types: GraphQLTypeDefinition[]) {
   // Generate Mutation type
   const mutationFields = types
     .map((type) => {
-      return `  create${type.name}(input: Create${type.name}Input!): ${type.name}!
+      const baseMutations = `  create${type.name}(input: Create${type.name}Input!): ${type.name}!
   update${type.name}(id: ID!, input: Update${type.name}Input!): ${type.name}`;
+
+      // Generate array field convenience methods
+      const arrayMutations = type.fields
+        .filter((field) => field.isList)
+        .map((field) => {
+          const fieldName = field.name;
+          // Use singular form for the mutation name and parameter
+          const singularFieldName = fieldName.endsWith("s")
+            ? fieldName.slice(0, -1)
+            : fieldName;
+          const parameterName = singularFieldName + "Id";
+
+          return `  add${type.name}${
+            singularFieldName.charAt(0).toUpperCase() +
+            singularFieldName.slice(1)
+          }(id: ID!, ${parameterName}: ID!): ${type.name}
+  remove${type.name}${
+            singularFieldName.charAt(0).toUpperCase() +
+            singularFieldName.slice(1)
+          }(id: ID!, ${parameterName}: ID!): ${type.name}`;
+        })
+        .join("\n");
+
+      return baseMutations + (arrayMutations ? "\n" + arrayMutations : "");
     })
     .join("\n");
 
@@ -157,6 +181,58 @@ ${mutationFields}
         );
       },
     });
+
+    // Add array field convenience resolvers
+    type.fields
+      .filter((field) => field.isList)
+      .forEach((field) => {
+        const fieldName = field.name;
+        // Use singular form for the resolver name and parameter
+        const singularFieldName = fieldName.endsWith("s")
+          ? fieldName.slice(0, -1)
+          : fieldName;
+        const capitalizedFieldName =
+          singularFieldName.charAt(0).toUpperCase() +
+          singularFieldName.slice(1);
+        const parameterName = singularFieldName + "Id";
+
+        Object.assign(resolvers.Mutation, {
+          [`add${type.name}${capitalizedFieldName}`]: async (
+            _: any,
+            {
+              id,
+              [parameterName]: itemId,
+            }: { id: string; [key: string]: string },
+            context: ResolverContext
+          ) => {
+            return defaultResolvers.addToArray(
+              collectionName,
+              id,
+              fieldName,
+              itemId,
+              context,
+              type
+            );
+          },
+          [`remove${type.name}${capitalizedFieldName}`]: async (
+            _: any,
+            {
+              id,
+              [parameterName]: itemId,
+            }: { id: string; [key: string]: string },
+            context: ResolverContext
+          ) => {
+            return defaultResolvers.removeFromArray(
+              collectionName,
+              id,
+              fieldName,
+              itemId,
+              context,
+              type
+            );
+          },
+        });
+      });
   });
 
   return {

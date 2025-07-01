@@ -17,7 +17,7 @@ interface GraphQLContext extends YogaInitialContext {
   currentUser: any | null;
 }
 
-interface createTypeInput {
+interface CreateTypeInput {
   name: string;
   description?: string;
   fields: GraphQLFieldDefinition[];
@@ -99,7 +99,7 @@ const typeManagementTypeDefs = `
   """
   Input for creating a new GraphQL type with its fields
   """
-  input createTypeInput {
+  input CreateTypeInput {
     "The name of the new type (must be unique)"
     name: String!
     
@@ -131,7 +131,7 @@ const typeManagementTypeDefs = `
     
     Requires authentication.
     """
-    createType(input: createTypeInput!): Boolean!
+    createType(input: CreateTypeInput!): Boolean!
     
     """
     Adds a new field to an existing GraphQL type.
@@ -149,7 +149,7 @@ const typeManagementResolvers = {
   Mutation: {
     createType: async (
       _: any,
-      { input }: { input: createTypeInput },
+      { input }: { input: CreateTypeInput },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;

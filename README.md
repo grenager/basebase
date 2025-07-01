@@ -98,7 +98,7 @@ The server will be running at `http://localhost:4000/graphql` with GraphiQL inte
   - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
   - `requestCode(phone: String!, name: String!): Boolean!`: Start phone verification
   - `verifyCode(phone: String!, code: String!): String`: Verify phone and get JWT token
-  - `createType(input: createTypeInput!): Boolean!`: Add a new GraphQL type to the schema
+  - `createType(input: CreateTypeInput!): Boolean!`: Add a new GraphQL type to the schema
   - `createFieldOnType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
 
 ### Dynamic Type Management

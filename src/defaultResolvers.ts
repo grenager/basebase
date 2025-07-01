@@ -278,4 +278,122 @@ export const defaultResolvers = {
       logger.graphql(operation, { id, data }, isAuthorized, result);
     }
   },
+
+  async addToArray(
+    collection: string,
+    id: string,
+    fieldName: string,
+    itemId: string,
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
+  ) {
+    const operation = `add${
+      collection.charAt(0).toUpperCase() + collection.slice(1)
+    }${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)}`;
+    const isAuthorized = !!context.currentUser;
+    let result;
+
+    try {
+      if (!isAuthorized) {
+        throw new Error("Authentication required");
+      }
+
+      // Convert itemId to ObjectId if it's a custom type reference
+      let convertedItem: any = itemId;
+      if (typeDefinition) {
+        const field = typeDefinition.fields.find((f) => f.name === fieldName);
+        if (field && isCustomType(field.type)) {
+          convertedItem = new ObjectId(itemId);
+        }
+      }
+
+      const dbResult = await context.db
+        .collection(collection)
+        .findOneAndUpdate(
+          { _id: new ObjectId(id) },
+          { $addToSet: { [fieldName]: convertedItem } },
+          { returnDocument: "after" }
+        );
+
+      if (!dbResult) return null;
+
+      // Convert _id to id and remove _id field
+      const { _id, ...docWithoutId } = dbResult;
+      result = {
+        id: _id.toString(),
+        ...docWithoutId,
+      };
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await populateReferences(result, typeDefinition, context.db);
+      }
+
+      return result;
+    } catch (error) {
+      result = error;
+      throw error;
+    } finally {
+      logger.graphql(operation, { id, itemId }, isAuthorized, result);
+    }
+  },
+
+  async removeFromArray(
+    collection: string,
+    id: string,
+    fieldName: string,
+    itemId: string,
+    context: ResolverContext,
+    typeDefinition?: GraphQLTypeDefinition
+  ) {
+    const operation = `remove${
+      collection.charAt(0).toUpperCase() + collection.slice(1)
+    }${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)}`;
+    const isAuthorized = !!context.currentUser;
+    let result;
+
+    try {
+      if (!isAuthorized) {
+        throw new Error("Authentication required");
+      }
+
+      // Convert itemId to ObjectId if it's a custom type reference
+      let convertedItem: any = itemId;
+      if (typeDefinition) {
+        const field = typeDefinition.fields.find((f) => f.name === fieldName);
+        if (field && isCustomType(field.type)) {
+          convertedItem = new ObjectId(itemId);
+        }
+      }
+
+      const dbResult = await context.db
+        .collection(collection)
+        .findOneAndUpdate(
+          { _id: new ObjectId(id) },
+          { $pull: { [fieldName]: convertedItem } },
+          { returnDocument: "after" }
+        );
+
+      if (!dbResult) return null;
+
+      // Convert _id to id and remove _id field
+      const { _id, ...docWithoutId } = dbResult;
+      result = {
+        id: _id.toString(),
+        ...docWithoutId,
+      };
+
+      // Populate references if type definition is provided
+      if (typeDefinition) {
+        result = await populateReferences(result, typeDefinition, context.db);
+      }
+
+      return result;
+    } catch (error) {
+      result = error;
+      throw error;
+    } finally {
+      logger.graphql(operation, { id, itemId }, isAuthorized, result);
+    }
+  },
 };
