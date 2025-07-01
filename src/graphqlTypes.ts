@@ -25,6 +25,7 @@ export interface GraphQLTypeDefinition {
   name: string;
   description?: string;
   fields: GraphQLFieldDefinition[];
+  creator: ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }

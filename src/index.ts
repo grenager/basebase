@@ -1,6 +1,6 @@
 import express from "express";
 import { createYoga, YogaInitialContext, MaskError } from "graphql-yoga";
-import { MongoClient, Db } from "mongodb";
+import { MongoClient, Db, ObjectId } from "mongodb";
 import dotenv from "dotenv";
 import { createServer } from "node:http";
 import { createSchema } from "graphql-yoga";
@@ -184,6 +184,7 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
+          creator: new ObjectId(context.currentUser._id),
         });
 
         if (errors.length > 0) {
@@ -194,6 +195,7 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
+          creator: new ObjectId(context.currentUser._id),
         });
         result = true;
       } catch (error) {
@@ -245,7 +247,9 @@ const typeManagementResolvers = {
         // Validate the new field
         const errors = await typeManager.validateFieldReferences({
           name: existingType.name,
+          description: existingType.description,
           fields: [...existingType.fields, input.field],
+          creator: existingType.creator,
         });
 
         if (errors.length > 0) {
@@ -367,6 +371,7 @@ async function getDynamicSchema() {
         { name: "phone", type: "String", isList: false, isRequired: true },
         { name: "createdAt", type: "Date", isList: false, isRequired: true },
       ],
+      creator: new ObjectId("000000000000000000000000"), // System-created type
     });
   }
 
