@@ -193,12 +193,21 @@ export const defaultResolvers = {
         throw new Error("Authentication required");
       }
 
-      const { id, ...insertData } = data; // Remove id if present
+      const { id, creator, ...insertData } = data; // Remove id and creator if present
+
+      // Automatically add creator field (except for User collection)
+      const dataToInsert =
+        collection === "users"
+          ? insertData
+          : {
+              ...insertData,
+              creator: new ObjectId(context.currentUser._id),
+            };
 
       // Convert custom type fields to ObjectIds for storage
       const convertedData = typeDefinition
-        ? convertToObjectIds(insertData, typeDefinition)
-        : insertData;
+        ? convertToObjectIds(dataToInsert, typeDefinition)
+        : dataToInsert;
 
       const dbResult = await context.db
         .collection(collection)
@@ -207,6 +216,7 @@ export const defaultResolvers = {
       result = {
         id: dbResult.insertedId.toString(),
         ...insertData, // Return original data format for GraphQL response
+        ...(collection !== "users" && { creator: context.currentUser }), // Add creator info for GraphQL response (except for User type)
       };
 
       // Populate references if type definition is provided

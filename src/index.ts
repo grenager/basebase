@@ -160,6 +160,23 @@ const typeManagementResolvers = {
           throw new Error("Authentication required");
         }
 
+        // Check for reserved field names "id" and "creator"
+        const idField = input.fields.find((field) => field.name === "id");
+        if (idField) {
+          throw new Error(
+            'Field name "id" is reserved and automatically added to all types'
+          );
+        }
+
+        const creatorField = input.fields.find(
+          (field) => field.name === "creator"
+        );
+        if (creatorField) {
+          throw new Error(
+            'Field name "creator" is reserved and automatically added to all types'
+          );
+        }
+
         const typeManager = new GraphQLTypeManager(context.db);
 
         // Validate field references
@@ -200,6 +217,19 @@ const typeManagementResolvers = {
       try {
         if (!isAuthorized) {
           throw new Error("Authentication required");
+        }
+
+        // Check for reserved field names "id" and "creator"
+        if (input.field.name === "id") {
+          throw new Error(
+            'Field name "id" is reserved and automatically added to all types'
+          );
+        }
+
+        if (input.field.name === "creator") {
+          throw new Error(
+            'Field name "creator" is reserved and automatically added to all types'
+          );
         }
 
         const typeManager = new GraphQLTypeManager(context.db);

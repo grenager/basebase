@@ -44,7 +44,17 @@ function generateTypeString(
 }
 
 function generateObjectType(type: GraphQLTypeDefinition): string {
+  // Always include id field first
+  const idField = `  "Unique identifier"\n  id: ID!`;
+
+  // Only include creator field for non-User types
+  const creatorField =
+    type.name !== "User"
+      ? `  "User who created this item"\n  creator: User!`
+      : null;
+
   const fields = type.fields
+    .filter((field) => field.name !== "id" && field.name !== "creator") // Remove any manually defined id or creator fields to avoid duplicates
     .map((field) => {
       const typeString = generateTypeString(field);
       const description = field.description ? `  "${field.description}"\n` : "";
@@ -52,9 +62,18 @@ function generateObjectType(type: GraphQLTypeDefinition): string {
     })
     .join("\n");
 
+  let allFields: string;
+  if (creatorField) {
+    allFields = fields
+      ? `${idField}\n${creatorField}\n${fields}`
+      : `${idField}\n${creatorField}`;
+  } else {
+    allFields = fields ? `${idField}\n${fields}` : idField;
+  }
+
   const typeDescription = type.description ? `"${type.description}"\n` : "";
 
-  return `${typeDescription}type ${type.name} {\n${fields}\n}`;
+  return `${typeDescription}type ${type.name} {\n${allFields}\n}`;
 }
 
 export function generateSchema(types: GraphQLTypeDefinition[]) {
