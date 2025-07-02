@@ -17,18 +17,33 @@ function convertToObjectIds(
   const converted = { ...data };
 
   for (const field of typeDefinition.fields) {
-    if (field.name in converted && isCustomType(field.type)) {
-      const value = converted[field.name];
+    if (field.name in converted) {
+      if (isCustomType(field.type)) {
+        const value = converted[field.name];
 
-      if (field.isList) {
-        // Handle array of IDs
-        if (Array.isArray(value)) {
-          converted[field.name] = value.map((id: string) => new ObjectId(id));
+        if (field.isList) {
+          // Handle array of IDs
+          if (Array.isArray(value)) {
+            converted[field.name] = value.map((id: string) => new ObjectId(id));
+          }
+        } else {
+          // Handle single ID
+          if (value) {
+            converted[field.name] = new ObjectId(value);
+          }
         }
-      } else {
-        // Handle single ID
-        if (value) {
-          converted[field.name] = new ObjectId(value);
+      } else if (field.type === "Date") {
+        const value = converted[field.name];
+        if (field.isList) {
+          // Handle array of dates
+          if (Array.isArray(value)) {
+            converted[field.name] = value.map((date: string) => new Date(date));
+          }
+        } else {
+          // Handle single date
+          if (value) {
+            converted[field.name] = new Date(value);
+          }
         }
       }
     }

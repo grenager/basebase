@@ -5,6 +5,16 @@ import {
 } from "./graphqlTypes";
 import { defaultResolvers, ResolverContext } from "./defaultResolvers";
 
+// Custom scalar for Date type that serializes to ISO string
+const dateScalar = {
+  serialize(value: Date): string {
+    return value.toISOString();
+  },
+  parseValue(value: string): Date {
+    return new Date(value);
+  },
+};
+
 function generateInputType(
   prefix: string,
   fields: GraphQLFieldDefinition[]
@@ -77,17 +87,29 @@ function generateObjectType(type: GraphQLTypeDefinition): string {
 }
 
 export function generateSchema(types: GraphQLTypeDefinition[]) {
+  console.log(
+    "Starting schema generation with types:",
+    types.map((t) => t.name)
+  );
+
   // Create a map for quick type lookup
   const typeMap = new Map<string, GraphQLTypeDefinition>();
   types.forEach((type) => typeMap.set(type.name, type));
 
   // Generate type definitions
   let typeDefsArray = types
-    .map((type) => [
-      generateObjectType(type),
-      generateInputType(`Create${type.name}Input`, type.fields),
-      generateInputType(`Update${type.name}Input`, type.fields),
-    ])
+    .map((type) => {
+      console.log(`Generating type definition for ${type.name}`);
+      console.log(
+        `Fields:`,
+        type.fields.map((f) => `${f.name}: ${f.type}`)
+      );
+      return [
+        generateObjectType(type),
+        generateInputType(`Create${type.name}Input`, type.fields),
+        generateInputType(`Update${type.name}Input`, type.fields),
+      ];
+    })
     .flat();
 
   // Generate Query type
@@ -132,6 +154,8 @@ export function generateSchema(types: GraphQLTypeDefinition[]) {
 
   // Combine all type definitions
   const typeDefs = `
+scalar Date
+
 ${typeDefsArray.join("\n\n")}
 
 type Query {
@@ -143,11 +167,16 @@ ${mutationFields}
 }
 `;
 
+  console.log("Final generated type definitions:", typeDefs);
+
   // Generate resolvers
   const resolvers = {
+    Date: dateScalar,
     Query: {},
     Mutation: {},
   };
+
+  console.log("Generated resolvers with scalar types:", Object.keys(resolvers));
 
   // Add resolvers for each type
   types.forEach((type) => {

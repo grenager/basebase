@@ -71,6 +71,18 @@ const authTypeDefs = `
   }
 `;
 
+const baseTypeDefs = `
+scalar Date
+
+type Query {
+  _empty: String
+}
+
+type Mutation {
+  _empty: String
+}
+`;
+
 const typeManagementTypeDefs = `
   """
   Input type for defining a GraphQL field with its properties and metadata
@@ -582,9 +594,12 @@ async function getDynamicSchema() {
   const db = client.db();
   const typeManager = new GraphQLTypeManager(db);
 
+  console.log("Starting schema generation...");
+
   // Ensure User type exists
   const userType = await typeManager.getGraphQLTypeByName("User");
   if (!userType) {
+    console.log("Creating default User type...");
     await typeManager.addGraphQLType({
       name: "User",
       description: "A user in the system",
@@ -599,11 +614,20 @@ async function getDynamicSchema() {
   }
 
   const types = await typeManager.getGraphQLTypes();
+  console.log(
+    "Loaded types from database:",
+    types.map((t) => t.name)
+  );
+
   const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
     generateSchema(types);
 
-  return createSchema<GraphQLContext>({
+  console.log("Base type definitions:", baseTypeDefs);
+  console.log("Generated type definitions:", generatedTypeDefs);
+
+  const schema = createSchema<GraphQLContext>({
     typeDefs: [
+      baseTypeDefs,
       generatedTypeDefs,
       authTypeDefs,
       typeManagementTypeDefs,
@@ -616,6 +640,9 @@ async function getDynamicSchema() {
       authorizationResolvers,
     ],
   });
+
+  console.log("Schema created successfully");
+  return schema;
 }
 
 async function startServer() {

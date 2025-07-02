@@ -151,12 +151,16 @@ export function isScalarType(type: string): boolean {
     "JSON",
     "Date",
   ];
-  return scalarTypes.includes(type as GraphQLScalarType);
+  const isScalar = scalarTypes.includes(type as GraphQLScalarType);
+  console.log(`Checking if ${type} is scalar:`, isScalar);
+  return isScalar;
 }
 
 // Helper function to check if a type is a custom type (references another GraphQL type)
 export function isCustomType(type: string): boolean {
-  return !isScalarType(type);
+  const isCustom = !isScalarType(type);
+  console.log(`Checking if ${type} is custom type:`, isCustom);
+  return isCustom;
 }
 
 // Example usage:
