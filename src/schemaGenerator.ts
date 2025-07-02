@@ -282,6 +282,10 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
         { id }: { id: string },
         context: any
       ) => {
+        if (!context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
         const doc = await context.db.collection(collectionName).findOne({
           _id: new ObjectId(id),
         });
@@ -292,8 +296,12 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
         { filter = {} }: { filter: Record<string, any> },
         context: any
       ) => {
+        if (!context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
         const query = Object.entries(filter).reduce(
-          (acc: Document, [key, value]) => {
+          (acc: any, [key, value]) => {
             // Handle ID fields by converting to ObjectId
             if (value && (key === "_id" || key.endsWith("Id"))) {
               acc[key] = new ObjectId(value as string);
@@ -302,7 +310,7 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
             }
             return acc;
           },
-          {} as Document
+          {}
         );
         return await context.db
           .collection(collectionName)
