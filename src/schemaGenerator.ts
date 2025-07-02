@@ -1,12 +1,49 @@
-import {
-  GraphQLTypeDefinition,
-  GraphQLFieldDefinition,
-  isCustomType,
-} from "./graphqlTypes";
-import { defaultResolvers, ResolverContext } from "./defaultResolvers";
+/**
+ * Schema Generator
+ *
+ * This module is responsible for dynamically generating a GraphQL schema from type definitions
+ * stored in the database. It handles:
+ *
+ * 1. Generates GraphQL SDL from type definition documents
+ *    - Converts database type definition documents stored in the graphqlTypes collection into GraphQL SDL
+ *    - Handles scalar and object types
+ *    - Manages list types and required/optional fields
+ *    - Prevents conflicts with reserved field names
+ *
+ * 2. Adds default fields to every type
+ *    - Every type (except User) automatically gets these fields:
+ *      - id: ID!           - Unique identifier
+ *      - creator: User!    - Reference to the creating user
+ *      - createdAt: Date!  - Creation timestamp
+ *      - updatedAt: Date!  - Last update timestamp
+ *
+ * 3. Generates CRUD operation methods for each type
+ *    For each type, generates:
+ *    - Queries:
+ *      - get[Type](id: ID!): Type
+ *      - get[Type]s(filter: JSON): [Type!]!
+ *    - Mutations:
+ *      - create[Type](input: TypeInput!): Type!
+ *      - update[Type](id: ID!, input: TypeInput!): Type
+ *      - delete[Type](id: ID!): Boolean!
+ *
+ * 4. Generates input types for mutations
+ *    - Generates input types for mutations
+ *    - Excludes default fields (id, creator, timestamps)
+ *    - Handles nested types and references
+ *
+ * Usage:
+ * ```typescript
+ * const { typeDefs, resolvers } = generateSchema(types);
+ * const schema = makeExecutableSchema({ typeDefs, resolvers });
+ * ```
+ */
+
+import { GraphQLTypeDefinition, GraphQLFieldDefinition } from "./graphqlTypes";
+import { ObjectId, Filter, Document } from "mongodb";
 
 // Custom scalar for Date type that serializes to ISO string
-const dateScalar = {
+export const dateScalar = {
   serialize(value: Date): string {
     return value.toISOString();
   },
@@ -15,276 +52,486 @@ const dateScalar = {
   },
 };
 
-function generateInputType(
-  prefix: string,
-  fields: GraphQLFieldDefinition[]
-): string {
-  const inputFields = fields
-    .filter((field) => field.name !== "id") // Exclude id field for inputs
+export const scalarResolvers = {
+  Date: dateScalar,
+  JSON: {
+    serialize: (value: any) => value,
+    parseValue: (value: any) => value,
+  },
+};
+
+const RESERVED_FIELD_NAMES = ["id", "creator", "createdAt", "updatedAt"];
+
+const DEFAULT_FIELDS: GraphQLFieldDefinition[] = [
+  {
+    name: "id",
+    type: "ID",
+    description: "Unique identifier",
+    isList: false,
+    isRequired: true,
+  },
+  {
+    name: "creator",
+    type: "User",
+    description: "User who created this object",
+    isList: false,
+    isRequired: true,
+  },
+  {
+    name: "createdAt",
+    type: "Date",
+    description: "When this object was created",
+    isList: false,
+    isRequired: true,
+  },
+  {
+    name: "updatedAt",
+    type: "Date",
+    description: "When this object was last updated",
+    isList: false,
+    isRequired: true,
+  },
+];
+
+function generateType(type: GraphQLTypeDefinition): string {
+  // Add default fields to all types, including User
+  const allFields = [...DEFAULT_FIELDS, ...type.fields];
+
+  const fields = allFields
     .map((field) => {
-      // For input types, convert custom types to ID
-      const inputField = isCustomType(field.type)
-        ? { ...field, type: "ID" }
-        : field;
+      let fieldType = field.type;
+      if (field.isList) {
+        fieldType = `[${fieldType}${field.isListItemRequired ? "!" : ""}]`;
+      }
+      if (field.isRequired) {
+        fieldType = `${fieldType}!`;
+      }
 
-      const typeString = generateTypeString(inputField, true);
-      const description = field.description ? `  "${field.description}"\n` : "";
-      return `${description}  ${field.name}: ${typeString}`;
+      const description = field.description
+        ? `"""${field.description}"""\n  `
+        : "";
+      return `${description}${field.name}: ${fieldType}`;
     })
-    .join("\n");
+    .join("\n  ");
 
-  return `input ${prefix} {\n${inputFields}\n}`;
+  const description = type.description ? `"""${type.description}"""\n` : "";
+  return `${description}type ${type.name} {
+  ${fields}
+}`;
 }
 
-function generateTypeString(
-  field: GraphQLFieldDefinition,
-  isInput: boolean = false
-): string {
-  // For input types, we don't want to make fields required
-  const isRequired = isInput ? false : field.isRequired;
-
-  let typeStr = field.type;
-  if (field.isList) {
-    typeStr = `[${typeStr}${field.isListItemRequired ? "!" : ""}]`;
-  }
-  if (isRequired) {
-    typeStr = `${typeStr}!`;
-  }
-  return typeStr;
-}
-
-function generateObjectType(type: GraphQLTypeDefinition): string {
-  // Always include id field first
-  const idField = `  "Unique identifier"\n  id: ID!`;
-
-  // Only include creator field for non-User types
-  const creatorField =
-    type.name !== "User"
-      ? `  "User who created this item"\n  creator: User!`
-      : null;
-
+function generateInputType(type: GraphQLTypeDefinition): string {
   const fields = type.fields
-    .filter((field) => field.name !== "id" && field.name !== "creator") // Remove any manually defined id or creator fields to avoid duplicates
+    .filter((field) => !RESERVED_FIELD_NAMES.includes(field.name)) // Exclude default fields from input
     .map((field) => {
-      const typeString = generateTypeString(field);
-      const description = field.description ? `  "${field.description}"\n` : "";
-      return `${description}  ${field.name}: ${typeString}`;
+      // For input types, convert object references to IDs
+      let fieldType = field.type;
+      if (
+        !["ID", "String", "Int", "Float", "Boolean", "Date"].includes(fieldType)
+      ) {
+        fieldType = "ID"; // Convert object references to ID type for inputs
+      }
+
+      if (field.isList) {
+        fieldType = `[${fieldType}${field.isListItemRequired ? "!" : ""}]`;
+      }
+      if (field.isRequired) {
+        fieldType = `${fieldType}!`;
+      }
+
+      const description = field.description
+        ? `"""${field.description}"""\n  `
+        : "";
+      return `${description}${field.name}: ${fieldType}`;
     })
-    .join("\n");
+    .join("\n  ");
 
-  let allFields: string;
-  if (creatorField) {
-    allFields = fields
-      ? `${idField}\n${creatorField}\n${fields}`
-      : `${idField}\n${creatorField}`;
-  } else {
-    allFields = fields ? `${idField}\n${fields}` : idField;
-  }
-
-  const typeDescription = type.description ? `"${type.description}"\n` : "";
-
-  return `${typeDescription}type ${type.name} {\n${allFields}\n}`;
+  return `input ${type.name}Input {
+  ${fields}
+}`;
 }
 
-export function generateSchema(types: GraphQLTypeDefinition[]) {
-  console.log(
-    "Starting schema generation with types:",
-    types.map((t) => t.name)
-  );
-
-  // Create a map for quick type lookup
-  const typeMap = new Map<string, GraphQLTypeDefinition>();
-  types.forEach((type) => typeMap.set(type.name, type));
-
-  // Generate type definitions
-  let typeDefsArray = types
+function generateQueryType(types: GraphQLTypeDefinition[]): string {
+  const queries = types
     .map((type) => {
-      console.log(`Generating type definition for ${type.name}`);
-      console.log(
-        `Fields:`,
-        type.fields.map((f) => `${f.name}: ${f.type}`)
-      );
+      const typeName = type.name;
       return [
-        generateObjectType(type),
-        generateInputType(`Create${type.name}Input`, type.fields),
-        generateInputType(`Update${type.name}Input`, type.fields),
+        `"""Get a single ${typeName} by ID"""\n  get${typeName}(id: ID!): ${typeName}`,
+        `"""Get all ${typeName}s, optionally filtered"""\n  get${typeName}s(filter: JSON): [${typeName}!]!`,
       ];
     })
-    .flat();
+    .flat()
+    .join("\n\n  ");
 
-  // Generate Query type
-  const queryFields = types
+  return `type Query {
+  ${queries}
+}`;
+}
+
+function generateMutationType(types: GraphQLTypeDefinition[]): string {
+  const mutations = types
     .map((type) => {
-      return `  get${type.name}(id: ID!): ${type.name}
-  getAll${type.name}s: [${type.name}!]!`;
-    })
-    .join("\n");
+      const typeName = type.name;
+      const baseFields = [
+        `"""Create a new ${typeName}"""\n  create${typeName}(input: ${typeName}Input!): ${typeName}!`,
+        `"""Update an existing ${typeName}"""\n  update${typeName}(id: ID!, input: ${typeName}Input!): ${typeName}!`,
+        `"""Delete a ${typeName}"""\n  delete${typeName}(id: ID!): Boolean!`,
+      ];
 
-  // Generate Mutation type
-  const mutationFields = types
-    .map((type) => {
-      const baseMutations = `  create${type.name}(input: Create${type.name}Input!): ${type.name}!
-  update${type.name}(id: ID!, input: Update${type.name}Input!): ${type.name}`;
-
-      // Generate array field convenience methods
-      const arrayMutations = type.fields
-        .filter((field) => field.isList)
+      // Add convenience mutations for array fields
+      const arrayFields = type.fields
+        .filter(
+          (field) => field.isList && !RESERVED_FIELD_NAMES.includes(field.name)
+        )
         .map((field) => {
-          const fieldName = field.name;
-          // Use singular form for the mutation name and parameter
-          const singularFieldName = fieldName.endsWith("s")
-            ? fieldName.slice(0, -1)
-            : fieldName;
-          const parameterName = singularFieldName + "Id";
-
-          return `  add${type.name}${
-            singularFieldName.charAt(0).toUpperCase() +
-            singularFieldName.slice(1)
-          }(id: ID!, ${parameterName}: ID!): ${type.name}
-  remove${type.name}${
-            singularFieldName.charAt(0).toUpperCase() +
-            singularFieldName.slice(1)
-          }(id: ID!, ${parameterName}: ID!): ${type.name}`;
+          const fieldNameCapitalized =
+            field.name.charAt(0).toUpperCase() + field.name.slice(1);
+          return [
+            `"""Add an item to ${typeName}.${field.name}"""\n  add${typeName}${fieldNameCapitalized}(id: ID!, itemId: ID!): ${typeName}!`,
+            `"""Remove an item from ${typeName}.${field.name}"""\n  remove${typeName}${fieldNameCapitalized}(id: ID!, itemId: ID!): ${typeName}!`,
+          ];
         })
-        .join("\n");
+        .flat();
 
-      return baseMutations + (arrayMutations ? "\n" + arrayMutations : "");
+      return [...baseFields, ...arrayFields];
     })
-    .join("\n");
+    .flat()
+    .join("\n\n  ");
 
-  // Combine all type definitions
-  const typeDefs = `
-scalar Date
-
-${typeDefsArray.join("\n\n")}
-
-type Query {
-${queryFields}
+  return `type Mutation {
+  ${mutations}
+}`;
 }
 
-type Mutation {
-${mutationFields}
-}
-`;
-
-  console.log("Final generated type definitions:", typeDefs);
-
-  // Generate resolvers
-  const resolvers = {
-    Date: dateScalar,
-    Query: {},
-    Mutation: {},
+export interface SchemaGeneratorResult {
+  typeDefs: string;
+  resolvers: {
+    Query: any;
+    Mutation: any;
+    [typeOrScalar: string]: any;
   };
+}
 
-  console.log("Generated resolvers with scalar types:", Object.keys(resolvers));
+export function generateSchema(
+  types: GraphQLTypeDefinition[]
+): SchemaGeneratorResult {
+  const typeDefinitions = types.map(generateType).join("\n\n");
+  const inputTypes = types.map(generateInputType).join("\n\n");
+  const queryType = generateQueryType(types);
+  const mutationType = generateMutationType(types);
 
-  // Add resolvers for each type
-  types.forEach((type) => {
-    // Use plural form for collection names
-    const collectionName = `${type.name.toLowerCase()}s`;
+  const typeDefs = `scalar Date
+scalar JSON
 
-    // Query resolvers
-    Object.assign(resolvers.Query, {
-      [`get${type.name}`]: async (
-        _: any,
-        { id }: { id: string },
-        context: ResolverContext
-      ) => {
-        return defaultResolvers.getDocument(collectionName, id, context, type);
-      },
-      [`getAll${type.name}s`]: async (
-        _: any,
-        __: any,
-        context: ResolverContext
-      ) => {
-        return defaultResolvers.getDocuments(collectionName, context, type);
-      },
-    });
+${typeDefinitions}
 
-    // Mutation resolvers
-    Object.assign(resolvers.Mutation, {
-      [`create${type.name}`]: async (
-        _: any,
-        { input }: { input: Record<string, any> },
-        context: ResolverContext
-      ) => {
-        return defaultResolvers.createDocument(
-          collectionName,
-          input,
-          context,
-          type
-        );
-      },
-      [`update${type.name}`]: async (
-        _: any,
-        { id, input }: { id: string; input: Record<string, any> },
-        context: ResolverContext
-      ) => {
-        return defaultResolvers.updateDocument(
-          collectionName,
-          id,
-          input,
-          context,
-          type
-        );
-      },
-    });
+${inputTypes}
 
-    // Add array field convenience resolvers
-    type.fields
-      .filter((field) => field.isList)
-      .forEach((field) => {
-        const fieldName = field.name;
-        // Use singular form for the resolver name and parameter
-        const singularFieldName = fieldName.endsWith("s")
-          ? fieldName.slice(0, -1)
-          : fieldName;
-        const capitalizedFieldName =
-          singularFieldName.charAt(0).toUpperCase() +
-          singularFieldName.slice(1);
-        const parameterName = singularFieldName + "Id";
+${queryType}
 
-        Object.assign(resolvers.Mutation, {
-          [`add${type.name}${capitalizedFieldName}`]: async (
-            _: any,
-            {
-              id,
-              [parameterName]: itemId,
-            }: { id: string; [key: string]: string },
-            context: ResolverContext
-          ) => {
-            return defaultResolvers.addToArray(
-              collectionName,
-              id,
-              fieldName,
-              itemId,
-              context,
-              type
-            );
-          },
-          [`remove${type.name}${capitalizedFieldName}`]: async (
-            _: any,
-            {
-              id,
-              [parameterName]: itemId,
-            }: { id: string; [key: string]: string },
-            context: ResolverContext
-          ) => {
-            return defaultResolvers.removeFromArray(
-              collectionName,
-              id,
-              fieldName,
-              itemId,
-              context,
-              type
-            );
-          },
-        });
-      });
-  });
+${mutationType}`;
+
+  // Combine resolvers from all types
+  const typeResolvers = types.reduce(
+    (acc: any, type) => {
+      const resolvers = generateResolvers(type);
+
+      // Merge type-specific resolvers
+      acc[type.name] = resolvers[type.name];
+
+      // Merge Query resolvers
+      acc.Query = { ...acc.Query, ...resolvers.Query };
+
+      // Merge Mutation resolvers
+      acc.Mutation = { ...acc.Mutation, ...resolvers.Mutation };
+
+      return acc;
+    },
+    {
+      Query: {},
+      Mutation: {},
+      ...scalarResolvers,
+    }
+  );
 
   return {
     typeDefs,
-    resolvers,
+    resolvers: typeResolvers,
   };
+}
+
+export function generateResolvers(type: GraphQLTypeDefinition): any {
+  const typeName = type.name;
+  const collectionName = `${typeName.toLowerCase()}s`;
+
+  const resolvers: any = {
+    // Type resolvers for default fields
+    [typeName]: {
+      id: (parent: any) => parent._id.toString(),
+      creator: async (parent: any, _: any, context: any) => {
+        if (!parent.creator) return null;
+        const user = await context.db.collection("users").findOne({
+          _id: new ObjectId(parent.creator),
+        });
+        return user ? { ...user, id: user._id.toString() } : null;
+      },
+    },
+    Query: {
+      [`get${typeName}`]: async (
+        _: any,
+        { id }: { id: string },
+        context: any
+      ) => {
+        const doc = await context.db.collection(collectionName).findOne({
+          _id: new ObjectId(id),
+        });
+        return doc;
+      },
+      [`get${typeName}s`]: async (
+        _: any,
+        { filter = {} }: { filter: Record<string, any> },
+        context: any
+      ) => {
+        const query = Object.entries(filter).reduce(
+          (acc: Document, [key, value]) => {
+            // Handle ID fields by converting to ObjectId
+            if (value && (key === "_id" || key.endsWith("Id"))) {
+              acc[key] = new ObjectId(value as string);
+            } else {
+              acc[key] = value;
+            }
+            return acc;
+          },
+          {} as Document
+        );
+        return await context.db
+          .collection(collectionName)
+          .find(query)
+          .toArray();
+      },
+    },
+    Mutation: {
+      [`create${typeName}`]: async (
+        _: any,
+        { input }: { input: any },
+        context: any
+      ) => {
+        if (!context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        // Convert ID strings to ObjectIds for references
+        const processedInput = Object.entries(input).reduce(
+          (acc: any, [key, value]) => {
+            const field = type.fields.find((f) => f.name === key);
+            if (!field) return acc;
+
+            if (
+              field.type !== "ID" &&
+              !["String", "Int", "Float", "Boolean", "Date"].includes(
+                field.type
+              )
+            ) {
+              // Handle arrays of references
+              if (field.isList && Array.isArray(value)) {
+                acc[key] = value.map((id: string) => new ObjectId(id));
+              }
+              // Handle single references
+              else if (value) {
+                acc[key] = new ObjectId(value);
+              }
+            } else {
+              acc[key] = value;
+            }
+            return acc;
+          },
+          {}
+        );
+
+        const now = new Date();
+        const doc = {
+          ...processedInput,
+          creator: new ObjectId(context.currentUser._id),
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const { insertedId } = await context.db
+          .collection(collectionName)
+          .insertOne(doc);
+        return {
+          ...doc,
+          _id: insertedId,
+        };
+      },
+      [`update${typeName}`]: async (
+        _: any,
+        { id, input }: { id: string; input: any },
+        context: any
+      ) => {
+        if (!context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        // Convert ID strings to ObjectIds for references
+        const processedInput = Object.entries(input).reduce(
+          (acc: any, [key, value]) => {
+            const field = type.fields.find((f) => f.name === key);
+            if (!field) return acc;
+
+            if (
+              field.type !== "ID" &&
+              !["String", "Int", "Float", "Boolean", "Date"].includes(
+                field.type
+              )
+            ) {
+              // Handle arrays of references
+              if (field.isList && Array.isArray(value)) {
+                acc[key] = value.map((id: string) => new ObjectId(id));
+              }
+              // Handle single references
+              else if (value) {
+                acc[key] = new ObjectId(value);
+              }
+            } else {
+              acc[key] = value;
+            }
+            return acc;
+          },
+          {}
+        );
+
+        const now = new Date();
+        const result = await context.db
+          .collection(collectionName)
+          .findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                ...processedInput,
+                updatedAt: now,
+              },
+            },
+            { returnDocument: "after" }
+          );
+
+        return result.value;
+      },
+      [`delete${typeName}`]: async (
+        _: any,
+        { id }: { id: string },
+        context: any
+      ) => {
+        if (!context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        const result = await context.db.collection(collectionName).deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        return result.deletedCount === 1;
+      },
+      // Add convenience mutations for array fields
+      ...type.fields
+        .filter(
+          (field) => field.isList && !RESERVED_FIELD_NAMES.includes(field.name)
+        )
+        .reduce((acc: any, field) => {
+          const fieldNameCapitalized =
+            field.name.charAt(0).toUpperCase() + field.name.slice(1);
+
+          // Add item to array mutation
+          acc[`add${typeName}${fieldNameCapitalized}`] = async (
+            _: any,
+            { id, itemId }: { id: string; itemId: string },
+            context: any
+          ) => {
+            if (!context.currentUser) {
+              throw new Error("Authentication required");
+            }
+
+            const result = await context.db
+              .collection(collectionName)
+              .findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                {
+                  $addToSet: { [field.name]: new ObjectId(itemId) },
+                  $set: { updatedAt: new Date() },
+                },
+                { returnDocument: "after" }
+              );
+
+            return result.value;
+          };
+
+          // Remove item from array mutation
+          acc[`remove${typeName}${fieldNameCapitalized}`] = async (
+            _: any,
+            { id, itemId }: { id: string; itemId: string },
+            context: any
+          ) => {
+            if (!context.currentUser) {
+              throw new Error("Authentication required");
+            }
+
+            const result = await context.db
+              .collection(collectionName)
+              .findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                {
+                  $pull: { [field.name]: new ObjectId(itemId) },
+                  $set: { updatedAt: new Date() },
+                },
+                { returnDocument: "after" }
+              );
+
+            return result.value;
+          };
+
+          return acc;
+        }, {}),
+    },
+  };
+
+  // Add resolvers for object reference fields
+  type.fields.forEach((field) => {
+    if (
+      !["ID", "String", "Int", "Float", "Boolean", "Date"].includes(field.type)
+    ) {
+      resolvers[typeName][field.name] = async (
+        parent: any,
+        _: any,
+        context: any
+      ) => {
+        if (!parent[field.name]) return null;
+
+        const collection = `${field.type.toLowerCase()}s`;
+
+        // Handle array of references
+        if (field.isList) {
+          const ids = parent[field.name].map((id: any) =>
+            id instanceof ObjectId ? id : new ObjectId(id)
+          );
+          const docs = await context.db
+            .collection(collection)
+            .find({ _id: { $in: ids } })
+            .toArray();
+          return docs.map((doc: any) => ({ ...doc, id: doc._id.toString() }));
+        }
+
+        // Handle single reference
+        const id =
+          parent[field.name] instanceof ObjectId
+            ? parent[field.name]
+            : new ObjectId(parent[field.name]);
+        const doc = await context.db
+          .collection(collection)
+          .findOne({ _id: id });
+        return doc ? { ...doc, id: doc._id.toString() } : null;
+      };
+    }
+  });
+
+  return resolvers;
 }

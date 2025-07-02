@@ -10,6 +10,8 @@ export type GraphQLScalarType =
   | "JSON"
   | "Date";
 
+const RESERVED_FIELD_NAMES = ["id", "creator", "createdAt", "updatedAt"];
+
 export interface GraphQLFieldDefinition {
   name: string;
   type: GraphQLScalarType | string; // string for custom types
@@ -26,113 +28,151 @@ export interface GraphQLTypeDefinition {
   description?: string;
   fields: GraphQLFieldDefinition[];
   creator: ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export class GraphQLTypeManager {
-  private collection: Collection<GraphQLTypeDefinition>;
+  private db: Db;
+  private typesCollection: Collection<GraphQLTypeDefinition>;
 
   constructor(db: Db) {
-    this.collection = db.collection("graphqlTypes");
+    this.db = db;
+    this.typesCollection = db.collection("graphqlTypes");
+  }
+
+  private getDefaultFields(): GraphQLFieldDefinition[] {
+    return [
+      {
+        name: "id",
+        type: "ID",
+        description: "Unique identifier",
+        isList: false,
+        isRequired: true,
+      },
+      {
+        name: "creator",
+        type: "ID",
+        description: "User who created this object",
+        isList: false,
+        isRequired: true,
+        refType: "User",
+      },
+      {
+        name: "createdAt",
+        type: "Date",
+        description: "When this object was created",
+        isList: false,
+        isRequired: true,
+      },
+      {
+        name: "updatedAt",
+        type: "Date",
+        description: "When this object was last updated",
+        isList: false,
+        isRequired: true,
+      },
+    ];
+  }
+
+  private validateNoReservedFields(fields: GraphQLFieldDefinition[]): string[] {
+    const errors: string[] = [];
+
+    for (const field of fields) {
+      if (RESERVED_FIELD_NAMES.includes(field.name)) {
+        errors.push(
+          `Field name "${field.name}" is reserved and automatically added to all types`
+        );
+      }
+    }
+
+    return errors;
   }
 
   // Create indexes if they don't exist
   async initialize(): Promise<void> {
-    await this.collection.createIndex({ name: 1 }, { unique: true });
+    await this.typesCollection.createIndex({ name: 1 }, { unique: true });
   }
 
   // Add a new GraphQL type
   async addGraphQLType(
-    type: Omit<GraphQLTypeDefinition, "_id" | "createdAt" | "updatedAt">
-  ): Promise<GraphQLTypeDefinition> {
+    type: Omit<GraphQLTypeDefinition, "createdAt" | "updatedAt" | "_id">
+  ): Promise<void> {
     const now = new Date();
-    const typeWithTimestamps = {
+
+    const typeWithDefaults: GraphQLTypeDefinition = {
       ...type,
+      fields: [...type.fields], // Keep user-defined fields only
       createdAt: now,
       updatedAt: now,
     };
 
-    const result = await this.collection.insertOne(typeWithTimestamps);
-    return {
-      _id: result.insertedId,
-      ...typeWithTimestamps,
-    };
+    await this.typesCollection.insertOne(typeWithDefaults);
   }
 
   // Get all GraphQL types
   async getGraphQLTypes(): Promise<GraphQLTypeDefinition[]> {
-    return await this.collection.find().toArray();
+    return await this.typesCollection.find().toArray();
   }
 
   // Get a specific GraphQL type by name
   async getGraphQLTypeByName(
     name: string
   ): Promise<GraphQLTypeDefinition | null> {
-    return await this.collection.findOne({ name });
+    return await this.typesCollection.findOne({ name });
   }
 
   // Update an existing GraphQL type
   async updateGraphQLType(
-    name: string,
-    update: Partial<
-      Omit<GraphQLTypeDefinition, "_id" | "name" | "createdAt" | "updatedAt">
-    >
-  ): Promise<GraphQLTypeDefinition | null> {
+    typeName: string,
+    update: Partial<GraphQLTypeDefinition>
+  ): Promise<void> {
+    // Validate no reserved fields in update
+    if (update.fields) {
+      const errors = this.validateNoReservedFields(update.fields);
+      if (errors.length > 0) {
+        throw new Error(errors.join(", "));
+      }
+    }
+
     const now = new Date();
-    const result = await this.collection.findOneAndUpdate(
-      { name },
+    await this.typesCollection.updateOne(
+      { name: typeName },
       {
         $set: {
           ...update,
           updatedAt: now,
         },
-      },
-      { returnDocument: "after" }
+      }
     );
-    return result;
   }
 
   // Delete a GraphQL type
   async deleteGraphQLType(name: string): Promise<boolean> {
-    const result = await this.collection.deleteOne({ name });
+    const result = await this.typesCollection.deleteOne({ name });
     return result.deletedCount === 1;
   }
 
   // Check if a type exists
   async typeExists(name: string): Promise<boolean> {
-    const count = await this.collection.countDocuments({ name });
+    const count = await this.typesCollection.countDocuments({ name });
     return count > 0;
   }
 
   // Validate field references
   async validateFieldReferences(
-    type: Omit<GraphQLTypeDefinition, "_id" | "createdAt" | "updatedAt">
+    type: Omit<GraphQLTypeDefinition, "createdAt" | "updatedAt" | "_id">
   ): Promise<string[]> {
-    const errors: string[] = [];
-    const customTypes = new Set(
-      type.fields
-        .filter((field) => !isScalarType(field.type))
-        .map((field) => field.type)
-    );
+    const errors = this.validateNoReservedFields(type.fields);
 
-    // Check custom type references
-    for (const customType of customTypes) {
-      if (!(await this.typeExists(customType))) {
-        errors.push(`Referenced type "${customType}" does not exist`);
-      }
-    }
-
-    // Check refType references
-    const refTypes = new Set(
-      type.fields
-        .filter((field) => field.refType)
-        .map((field) => field.refType!)
-    );
-
-    for (const refType of refTypes) {
-      if (!(await this.typeExists(refType))) {
-        errors.push(`Referenced type "${refType}" in refType does not exist`);
+    // Continue with existing reference validation
+    for (const field of type.fields) {
+      if (field.refType) {
+        const referencedType = await this.getGraphQLTypeByName(field.refType);
+        if (!referencedType && field.refType !== "User") {
+          // Allow User type references
+          errors.push(`Referenced type "${field.refType}" does not exist`);
+        }
       }
     }
 

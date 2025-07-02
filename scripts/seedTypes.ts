@@ -1,6 +1,7 @@
 import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
 import { GraphQLTypeManager } from "../src/graphqlTypes";
+import { ObjectId } from "mongodb";
 
 // Load environment variables
 dotenv.config();
@@ -38,9 +39,23 @@ async function seedTypes() {
       name: "App",
       description: "An application in the system",
       fields: [
-        { name: "id", type: "ID", isList: false, isRequired: true },
+        { name: "name", type: "String", isList: false, isRequired: true },
+        {
+          name: "description",
+          type: "String",
+          isList: false,
+          isRequired: false,
+        },
         { name: "githubUrl", type: "String", isList: false, isRequired: true },
-        { name: "ownerId", type: "ID", isList: false, isRequired: true },
+        { name: "apiKey", type: "String", isList: false, isRequired: false },
+        {
+          name: "apiKeyExpiresAt",
+          type: "Date",
+          isList: false,
+          isRequired: false,
+        },
+        { name: "createdAt", type: "Date", isList: false, isRequired: true },
+        { name: "updatedAt", type: "Date", isList: false, isRequired: true },
       ],
     };
 

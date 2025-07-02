@@ -16,7 +16,14 @@ interface GraphQLContext extends YogaInitialContext {
   db: Db;
   authService: AuthService;
   authorizationService: AuthorizationService;
-  currentUser: any | null;
+  currentUser: {
+    _id: ObjectId;
+    name: string;
+    phone: string;
+    createdAt: Date;
+    currentAppId?: string;
+    [key: string]: any;
+  } | null;
 }
 
 interface CreateTypeInput {
@@ -63,11 +70,15 @@ const client = new MongoClient(MONGODB_URI, {
 const authTypeDefs = `
   extend type Query {
     getMyUser: User
+    getMyApps: [App!]!
   }
   
   extend type Mutation {
     requestCode(phone: String!, name: String!): Boolean!
-    verifyCode(phone: String!, code: String!): String
+    verifyCode(phone: String!, code: String!, appApiKey: String!): String
+    createApp(name: String!, description: String, githubUrl: String!): App!
+    generateAppApiKey(appId: String!): App!
+    revokeAppApiKey(appId: String!): App!
   }
 `;
 
@@ -253,7 +264,7 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
-          creator: new ObjectId(context.currentUser._id),
+          creator: new ObjectId(context.currentUser?._id),
         });
 
         if (errors.length > 0) {
@@ -264,7 +275,7 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
-          creator: new ObjectId(context.currentUser._id),
+          creator: new ObjectId(context.currentUser?._id),
         });
         result = true;
       } catch (error) {
@@ -348,28 +359,55 @@ const authResolvers = {
       let result;
 
       try {
-        if (!isAuthorized) {
+        if (!isAuthorized || !context.currentUser) {
           throw new Error("Authentication required");
         }
 
-        result = context.currentUser;
-        // Transform MongoDB document to match GraphQL User type
-        if (result) {
-          result = {
-            id: result._id.toString(),
-            name: result.name,
-            phone: result.phone,
-            createdAt: result.createdAt,
-            email: result.email || null,
-            profileImageUrl: result.profileImageUrl || null,
-          };
-        }
+        result = {
+          id: context.currentUser._id.toString(),
+          name: context.currentUser.name,
+          phone: context.currentUser.phone,
+          createdAt: context.currentUser.createdAt,
+          email: context.currentUser.email || null,
+          profileImageUrl: context.currentUser.profileImageUrl || null,
+        };
         return result;
       } catch (error) {
         result = error;
         throw error;
       } finally {
         logger.graphql("getMyUser", {}, isAuthorized, result);
+      }
+    },
+
+    getMyApps: async (_: any, __: any, context: GraphQLContext) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized || !context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        const apps = await context.db
+          .collection("apps")
+          .find({
+            creator: new ObjectId(context.currentUser._id),
+          })
+          .toArray();
+
+        result = apps.map((app) => ({
+          ...app,
+          id: app._id.toString(),
+          creator: app.creator.toString(),
+        }));
+
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("getMyApps", {}, isAuthorized, result);
       }
     },
   },
@@ -399,14 +437,19 @@ const authResolvers = {
 
     verifyCode: async (
       _: any,
-      { phone, code }: { phone: string; code: string },
+      {
+        phone,
+        code,
+        appApiKey,
+      }: { phone: string; code: string; appApiKey: string },
       context: GraphQLContext
     ) => {
       let result;
       try {
         result = await context.authService.verifyPhoneAndCreateUser(
           phone,
-          code
+          code,
+          appApiKey
         );
       } catch (error) {
         result = error;
@@ -414,12 +457,198 @@ const authResolvers = {
       } finally {
         logger.graphql(
           "verifyCode",
-          { phone, code: "[REDACTED]" },
+          { phone, code: "[REDACTED]", appApiKey: "[REDACTED]" },
           true, // Auth not required for this mutation
           result
         );
       }
       return result;
+    },
+
+    createApp: async (
+      _: any,
+      {
+        name,
+        description,
+        githubUrl,
+      }: { name: string; description?: string; githubUrl: string },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized || !context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        const now = new Date();
+        const app = {
+          name,
+          description,
+          githubUrl,
+          creator: new ObjectId(context.currentUser._id),
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const { insertedId } = await context.db
+          .collection("apps")
+          .insertOne(app);
+
+        // Generate initial API key
+        const apiKey = await context.authService.generateApiKey();
+        const apiKeyExpiresAt = new Date();
+        apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
+
+        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
+          { _id: insertedId },
+          {
+            $set: {
+              apiKey,
+              apiKeyExpiresAt,
+            },
+          },
+          { returnDocument: "after" }
+        );
+
+        if (!updatedApp?.value) {
+          throw new Error("Failed to update app");
+        }
+
+        result = {
+          ...updatedApp.value,
+          id: updatedApp.value._id.toString(),
+          creator: updatedApp.value.creator.toString(),
+        };
+
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql(
+          "createApp",
+          { name, description, githubUrl },
+          isAuthorized,
+          result
+        );
+      }
+    },
+
+    generateAppApiKey: async (
+      _: any,
+      { appId }: { appId: string },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized || !context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        // Find the app and verify ownership
+        const app = await context.db.collection("apps").findOne({
+          _id: new ObjectId(appId),
+          creator: new ObjectId(context.currentUser._id),
+        });
+
+        if (!app) {
+          throw new Error("App not found or you don't have permission");
+        }
+
+        // Generate new API key
+        const apiKey = await context.authService.generateApiKey();
+        const apiKeyExpiresAt = new Date();
+        apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
+
+        // Update the app with new API key
+        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
+          { _id: new ObjectId(appId) },
+          {
+            $set: {
+              apiKey,
+              apiKeyExpiresAt,
+              updatedAt: new Date(),
+            },
+          },
+          { returnDocument: "after" }
+        );
+
+        if (!updatedApp?.value) {
+          throw new Error("Failed to update app");
+        }
+
+        result = {
+          ...updatedApp.value,
+          id: updatedApp.value._id.toString(),
+          creator: updatedApp.value.creator.toString(),
+        };
+
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("generateAppApiKey", { appId }, isAuthorized, result);
+      }
+    },
+
+    revokeAppApiKey: async (
+      _: any,
+      { appId }: { appId: string },
+      context: GraphQLContext
+    ) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized || !context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        // Find the app and verify ownership
+        const app = await context.db.collection("apps").findOne({
+          _id: new ObjectId(appId),
+          creator: new ObjectId(context.currentUser._id),
+        });
+
+        if (!app) {
+          throw new Error("App not found or you don't have permission");
+        }
+
+        // Remove API key
+        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
+          { _id: new ObjectId(appId) },
+          {
+            $set: {
+              apiKey: null,
+              apiKeyExpiresAt: null,
+              updatedAt: new Date(),
+            },
+          },
+          { returnDocument: "after" }
+        );
+
+        if (!updatedApp?.value) {
+          throw new Error("Failed to update app");
+        }
+
+        result = {
+          ...updatedApp.value,
+          id: updatedApp.value._id.toString(),
+          creator: updatedApp.value.creator.toString(),
+        };
+
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("revokeAppApiKey", { appId }, isAuthorized, result);
+      }
     },
   },
 };
@@ -604,10 +833,43 @@ async function getDynamicSchema() {
       name: "User",
       description: "A user in the system",
       fields: [
-        { name: "id", type: "ID", isList: false, isRequired: true },
         { name: "name", type: "String", isList: false, isRequired: true },
         { name: "phone", type: "String", isList: false, isRequired: true },
-        { name: "createdAt", type: "Date", isList: false, isRequired: true },
+        { name: "email", type: "String", isList: false, isRequired: false },
+        {
+          name: "profileImageUrl",
+          type: "String",
+          isList: false,
+          isRequired: false,
+        },
+      ],
+      creator: new ObjectId("000000000000000000000000"), // System-created type
+    });
+  }
+
+  // Ensure App type exists
+  const appType = await typeManager.getGraphQLTypeByName("App");
+  if (!appType) {
+    console.log("Creating default App type...");
+    await typeManager.addGraphQLType({
+      name: "App",
+      description: "An application in the system",
+      fields: [
+        { name: "name", type: "String", isList: false, isRequired: true },
+        {
+          name: "description",
+          type: "String",
+          isList: false,
+          isRequired: false,
+        },
+        { name: "githubUrl", type: "String", isList: false, isRequired: true },
+        { name: "apiKey", type: "String", isList: false, isRequired: false },
+        {
+          name: "apiKeyExpiresAt",
+          type: "Date",
+          isList: false,
+          isRequired: false,
+        },
       ],
       creator: new ObjectId("000000000000000000000000"), // System-created type
     });
@@ -672,6 +934,17 @@ async function startServer() {
         if (authHeader?.startsWith("Bearer ")) {
           const token = authHeader.split("Bearer ")[1];
           currentUser = await authService.getUserFromToken(token);
+        } else if (authHeader?.startsWith("ApiKey ")) {
+          const apiKey = authHeader.split("ApiKey ")[1];
+          const auth = await authService.validateApiKey(apiKey);
+          if (auth) {
+            currentUser = await db.collection("users").findOne({
+              _id: new ObjectId(auth.userId),
+            });
+            if (currentUser) {
+              currentUser.currentAppId = auth.appId;
+            }
+          }
         }
 
         return {

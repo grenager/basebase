@@ -3,6 +3,7 @@ dotenv.config();
 import { Db, ObjectId } from "mongodb";
 import jwt from "jsonwebtoken";
 import twilio from "twilio";
+import crypto from "crypto";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const VERIFICATION_CODE_EXPIRY = 10 * 60 * 1000; // 10 minutes
@@ -131,7 +132,8 @@ export class AuthService {
 
   async verifyPhoneAndCreateUser(
     phone: string,
-    code: string
+    code: string,
+    appApiKey: string
   ): Promise<string | null> {
     const attempt = await this.verificationAttemptsCollection.findOne({
       phone,
@@ -142,6 +144,16 @@ export class AuthService {
     }
 
     try {
+      // Verify app API key first
+      const app = await this.db.collection("apps").findOne({
+        apiKey: appApiKey,
+        apiKeyExpiresAt: { $gt: new Date() },
+      });
+
+      if (!app) {
+        throw new Error("Invalid or expired app API key");
+      }
+
       // Check if user already exists
       const existingUser = await this.db.collection("users").findOne({ phone });
 
@@ -171,24 +183,61 @@ export class AuthService {
       // Delete verification attempt
       await this.verificationAttemptsCollection.deleteOne({ phone });
 
-      // Generate JWT
-      return this.generateToken(userId);
+      // Generate JWT with both user and app ID
+      return this.generateToken(userId, app._id.toString());
     } catch (error) {
       console.error("Error creating/updating user:", error);
       return null;
     }
   }
 
-  generateToken(userId: string): string {
-    return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  generateToken(userId: string, appId: string): string {
+    return jwt.sign({ userId, appId }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  }
+
+  async generateApiKey(): Promise<string> {
+    // Generate a secure random API key
+    const apiKey = crypto.randomBytes(32).toString("base64url");
+    return apiKey;
   }
 
   async getUserFromToken(token: string): Promise<any | null> {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-      return await this.db.collection("users").findOne({
+      const decoded = jwt.verify(token, JWT_SECRET) as {
+        userId: string;
+        appId: string;
+      };
+      const user = await this.db.collection("users").findOne({
         _id: new ObjectId(decoded.userId),
       });
+
+      if (!user) return null;
+
+      // Add appId to user object for context
+      return {
+        ...user,
+        currentAppId: decoded.appId,
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async validateApiKey(
+    apiKey: string
+  ): Promise<{ userId: string; appId: string } | null> {
+    try {
+      const app = await this.db.collection("apps").findOne({
+        apiKey,
+        apiKeyExpiresAt: { $gt: new Date() },
+      });
+
+      if (!app) return null;
+
+      return {
+        userId: app.creator.toString(),
+        appId: app._id.toString(),
+      };
     } catch (error) {
       return null;
     }

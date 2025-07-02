@@ -2,7 +2,7 @@ import { AbilityBuilder, Ability } from "@casl/ability";
 import { Db, Collection, ObjectId } from "mongodb";
 
 export type Action = "manage" | "create" | "read" | "update" | "delete";
-export type Subject = "User" | "Post" | "all";
+export type Subject = "User" | "Post" | "all" | "App";
 
 export interface AuthorizationRule {
   _id?: ObjectId;
@@ -52,27 +52,44 @@ export class AuthorizationService {
         isActive: true,
       },
       {
+        name: "app-manage-by-owner",
+        description: "Apps can only be modified or deleted by their owner",
+        action: "manage",
+        subject: "App",
+        conditions: { ownerId: "${user._id}" },
+        priority: 100,
+        isActive: true,
+      },
+      {
         name: "post-manage-by-creator",
-        description: "Posts can only be modified or deleted by their creator",
+        description:
+          "Posts can only be modified or deleted by their creator within the same app",
         action: "manage",
         subject: "Post",
-        conditions: { creator: "${user._id}" },
+        conditions: {
+          creator: "${user._id}",
+          appId: "${user.currentAppId}",
+        },
         priority: 100,
         isActive: true,
       },
       {
         name: "authenticated-read-all",
-        description: "Authenticated users can read all resources",
+        description:
+          "Authenticated users can read all resources within their current app",
         action: "read",
         subject: "all",
+        conditions: { appId: "${user.currentAppId}" },
         priority: 50,
         isActive: true,
       },
       {
         name: "authenticated-create-all",
-        description: "Authenticated users can create all resources",
+        description:
+          "Authenticated users can create all resources within their current app",
         action: "create",
         subject: "all",
+        conditions: { appId: "${user.currentAppId}" },
         priority: 50,
         isActive: true,
       },
@@ -149,16 +166,21 @@ export class AuthorizationService {
       return build();
     }
 
-    // Simple implementation for now - we'll make this dynamic later
     // Users can manage their own records
-    can("manage", "User");
+    can("manage", "User", { _id: user._id });
 
-    // Users can manage posts they created
-    can("manage", "Post");
+    // Users can manage apps they own
+    can("manage", "App", { ownerId: user._id });
 
-    // Users can read and create anything
-    can("read", "all");
-    can("create", "all");
+    // Users can manage posts they created in their current app
+    can("manage", "Post", {
+      creator: user._id,
+      appId: user.currentAppId,
+    });
+
+    // Users can read and create anything in their current app
+    can("read", "all", { appId: user.currentAppId });
+    can("create", "all", { appId: user.currentAppId });
 
     return build();
   }
@@ -188,41 +210,27 @@ export class AuthorizationService {
     return build();
   }
 
-  private interpolateConditions(
-    conditions: Record<string, any>,
-    user: any
-  ): Record<string, any> {
-    const interpolated: Record<string, any> = {};
+  private interpolateConditions(conditions: any, user: any): any {
+    const interpolated = JSON.parse(JSON.stringify(conditions));
 
-    for (const [key, value] of Object.entries(conditions)) {
-      if (
-        typeof value === "string" &&
-        value.startsWith("${") &&
-        value.endsWith("}")
-      ) {
-        // Extract variable path from ${user._id} format
-        const varPath = value.slice(2, -1);
-        const interpolatedValue = this.getNestedValue(user, varPath);
-
-        // Convert to ObjectId if it looks like a MongoDB ObjectId
-        if (
-          typeof interpolatedValue === "string" &&
-          ObjectId.isValid(interpolatedValue)
-        ) {
-          interpolated[key] = new ObjectId(interpolatedValue);
-        } else {
-          interpolated[key] = interpolatedValue;
-        }
-      } else {
-        interpolated[key] = value;
+    for (const key in interpolated) {
+      if (typeof interpolated[key] === "string") {
+        // Handle ${user._id}
+        interpolated[key] = interpolated[key].replace(
+          /\${user\._id}/g,
+          user._id?.toString()
+        );
+        // Handle ${user.currentAppId}
+        interpolated[key] = interpolated[key].replace(
+          /\${user\.currentAppId}/g,
+          user.currentAppId?.toString()
+        );
+      } else if (typeof interpolated[key] === "object") {
+        interpolated[key] = this.interpolateConditions(interpolated[key], user);
       }
     }
 
     return interpolated;
-  }
-
-  private getNestedValue(obj: any, path: string): any {
-    return path.split(".").reduce((current, prop) => current?.[prop], obj);
   }
 
   checkPermission(
@@ -253,6 +261,16 @@ export class AuthorizationService {
       return resourceId === userId;
     }
 
+    // Handle App subject - users can only manage apps they own
+    if (
+      subject === "App" &&
+      (action === "update" || action === "delete" || action === "manage")
+    ) {
+      const ownerId = resource.ownerId?.toString();
+      const userId = user._id?.toString() || user.id?.toString();
+      return ownerId === userId;
+    }
+
     // Handle Post subject - users can only manage posts they created
     if (
       subject === "Post" &&
@@ -260,7 +278,15 @@ export class AuthorizationService {
     ) {
       const creatorId = resource.creator?.toString();
       const userId = user._id?.toString() || user.id?.toString();
-      return creatorId === userId;
+      // Also check if the user is using the app that owns the post
+      const appMatch =
+        resource.appId?.toString() === user.currentAppId?.toString();
+      return creatorId === userId && appMatch;
+    }
+
+    // For other cases, check if the resource belongs to the current app
+    if (resource.appId && user.currentAppId) {
+      return resource.appId.toString() === user.currentAppId.toString();
     }
 
     // For other cases, allow if the general permission exists

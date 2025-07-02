@@ -35,11 +35,43 @@ A NodeJS GraphQL server for everyone.
 
 ## Authentication
 
-### Getting a Token (New Users)
+### App Creation and API Key
 
-New users need to verify their phone number to get a JWT token. This is a two-step process:
+1. First, sign in to BaseBase and create an app:
 
-1. Start phone verification:
+```graphql
+mutation {
+  createApp(
+    name: "My App"
+    description: "My awesome app"
+    githubUrl: "https://github.com/me/my-app"
+  ) {
+    id
+    name
+    apiKey # Save this immediately - you won't be able to see it again!
+  }
+}
+```
+
+2. Save the returned API key securely - you'll need it for user authentication. If you lose it, you can generate a new one:
+
+```graphql
+mutation {
+  generateAppApiKey(appId: "your_app_id") {
+    apiKey # Save this immediately - you won't be able to see it again!
+  }
+}
+```
+
+### Implementing User Authentication in Your App
+
+1. Add the BaseBase API key to your app's environment:
+
+```env
+BASEBASE_API_KEY=your_api_key_here
+```
+
+2. When a user wants to sign in to your app, start phone verification:
 
 ```graphql
 mutation {
@@ -47,137 +79,51 @@ mutation {
 }
 ```
 
-This will send a 6-digit code to the provided phone number via SMS.
-
-2. Verify the code and get your token:
+3. After the user receives their code, verify it server-side using your app's API key:
 
 ```graphql
 mutation {
   verifyCode(
     phone: "+1234567890"
-    code: "123456" # The code you received via SMS
+    code: "123456" # The code received via SMS
+    appApiKey: "your_api_key" # Your app's API key
   )
 }
 ```
 
-This will return a JWT token if the code is correct.
+This returns a JWT token specific to both the user and your app. Store this token in the user's browser (e.g., localStorage) for future requests.
 
-### Using Your Token
+### Using Authentication
 
-For all subsequent API requests:
+For API requests:
 
-1. Add the JWT token to your HTTP headers:
+1. For user requests, use the JWT token:
 
 ```json
 {
-  "Authorization": "Bearer your.jwt.token"
+  "Authorization": "Bearer user.jwt.token"
 }
 ```
 
-2. The server will automatically authenticate your request and provide access to your user data.
+2. For server-to-server requests, use your app's API key:
+
+```json
+{
+  "Authorization": "ApiKey your_api_key"
+}
+```
 
 Notes:
 
-- Tokens are valid for one year
-- Keep your token secure and never share it
+- JWT tokens are valid for one year
+- API keys are valid for one year by default
+- Keep your tokens and API keys secure and never share them
 - One verification attempt per phone number at a time
 - Verification codes expire after 10 minutes
+- Each app gets its own authentication context
+- Users authenticated in one app cannot access resources from another app
+- API keys can be revoked using the `revokeAppApiKey` mutation if compromised
 
 ## GraphQL API
 
-The server will be running at `http://localhost:4000/graphql` with GraphiQL interface enabled.
-
-### Available Operations
-
-- Query:
-  - `documents(collection: String!, filter: JSON): [Document!]!`: Get all documents from a collection
-  - `document(collection: String!, id: ID!): Document`: Get document by ID from a collection
-- Mutation:
-  - `createDocument(collection: String!, data: JSON!): Document!`: Create a new document
-  - `updateDocument(collection: String!, id: ID!, data: JSON!): Document`: Update an existing document
-  - `deleteDocument(collection: String!, id: ID!): Boolean!`: Delete a document
-  - `requestCode(phone: String!, name: String!): Boolean!`: Start phone verification
-  - `verifyCode(phone: String!, code: String!): String`: Verify phone and get JWT token
-  - `createType(input: CreateTypeInput!): Boolean!`: Add a new GraphQL type to the schema
-  - `createFieldOnType(input: AddFieldInput!): Boolean!`: Add a field to an existing GraphQL type
-
-### Dynamic Type Management
-
-The server supports dynamic type management through GraphQL mutations. These operations require authentication.
-
-#### Adding a New Type
-
-```graphql
-mutation {
-  createType(
-    input: {
-      name: "Product"
-      description: "A product in the system"
-      fields: [
-        { name: "id", type: "ID", isList: false, isRequired: true }
-        { name: "name", type: "String", isList: false, isRequired: true }
-        { name: "price", type: "Float", isList: false, isRequired: true }
-      ]
-    }
-  )
-}
-```
-
-Available scalar types: `ID`, `String`, `Int`, `Float`, `Boolean`, `JSON`, `Date`
-
-#### Adding a Field to Existing Type
-
-```graphql
-mutation {
-  createFieldOnType(
-    input: {
-      typeName: "Product"
-      field: {
-        name: "description"
-        type: "String"
-        isList: false
-        isRequired: false
-      }
-    }
-  )
-}
-```
-
-Notes:
-
-- All type management operations require authentication
-- Types can reference other custom types
-- List fields support optional `isListItemRequired` for non-nullable items
-- The schema is automatically regenerated when types are modified
-
-### Example Usage
-
-```graphql
-# Create a document in the "users" collection
-mutation {
-  createDocument(
-    collection: "users",
-    data: {
-      name: "John Doe",
-      email: "john@example.com",
-      customField: "value"
-    }
-  ) {
-    id
-    data
-  }
-}
-
-# Query documents with a filter
-query {
-  documents(
-    collection: "users",
-    filter: {
-      "email": { "$exists": true }
-    }
-  ) {
-    id
-    data
-  }
-}
-```
+The server will be running at `
