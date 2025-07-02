@@ -33,46 +33,10 @@ export interface GraphQLTypeDefinition {
 }
 
 export class GraphQLTypeManager {
-  private db: Db;
   private typesCollection: Collection<GraphQLTypeDefinition>;
 
   constructor(db: Db) {
-    this.db = db;
     this.typesCollection = db.collection("graphqlTypes");
-  }
-
-  private getDefaultFields(): GraphQLFieldDefinition[] {
-    return [
-      {
-        name: "id",
-        type: "ID",
-        description: "Unique identifier",
-        isList: false,
-        isRequired: true,
-      },
-      {
-        name: "creator",
-        type: "ID",
-        description: "User who created this object",
-        isList: false,
-        isRequired: true,
-        refType: "User",
-      },
-      {
-        name: "createdAt",
-        type: "Date",
-        description: "When this object was created",
-        isList: false,
-        isRequired: true,
-      },
-      {
-        name: "updatedAt",
-        type: "Date",
-        description: "When this object was last updated",
-        isList: false,
-        isRequired: true,
-      },
-    ];
   }
 
   private validateNoReservedFields(fields: GraphQLFieldDefinition[]): string[] {

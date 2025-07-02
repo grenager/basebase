@@ -40,7 +40,7 @@
  */
 
 import { GraphQLTypeDefinition, GraphQLFieldDefinition } from "./graphqlTypes";
-import { ObjectId, Filter, Document } from "mongodb";
+import { ObjectId } from "mongodb";
 
 // Custom scalar for Date type that serializes to ISO string
 export const dateScalar = {
@@ -345,7 +345,7 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
                 acc[key] = value.map((id: string) => new ObjectId(id));
               }
               // Handle single references
-              else if (value) {
+              else if (value && typeof value === "string") {
                 acc[key] = new ObjectId(value);
               }
             } else {
@@ -398,7 +398,7 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
                 acc[key] = value.map((id: string) => new ObjectId(id));
               }
               // Handle single references
-              else if (value) {
+              else if (value && typeof value === "string") {
                 acc[key] = new ObjectId(value);
               }
             } else {
