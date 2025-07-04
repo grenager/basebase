@@ -86,7 +86,7 @@ mutation {
   verifyCode(
     phone: "+1234567890"
     code: "123456" # The code received via SMS
-    ProjectApiKey: "your_api_key" # Your Project's API key
+    projectApiKey: "your_api_key" # Your Project's API key
   )
 }
 ```

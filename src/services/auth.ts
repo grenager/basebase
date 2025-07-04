@@ -148,12 +148,12 @@ export class AuthService {
 
     try {
       // Verify Project API key first
-      const Project = await this.db.collection("Projects").findOne({
+      const project = await this.db.collection("projects").findOne({
         apiKey: ProjectApiKey,
         apiKeyExpiresAt: { $gt: new Date() },
       });
 
-      if (!Project) {
+      if (!project) {
         throw new Error("Invalid or expired Project API key");
       }
 
@@ -189,15 +189,15 @@ export class AuthService {
       });
 
       // Generate JWT with both user and Project ID
-      return this.generateToken(userId, Project._id.toString());
+      return this.generateToken(userId, project._id.toString());
     } catch (error) {
       console.error("Error creating/updating user:", error);
       return null;
     }
   }
 
-  generateToken(userId: string, ProjectId: string): string {
-    return jwt.sign({ userId, ProjectId }, JWT_SECRET, {
+  generateToken(userId: string, projectId: string): string {
+    return jwt.sign({ userId, projectId }, JWT_SECRET, {
       expiresIn: JWT_EXPIRY,
     });
   }
@@ -212,8 +212,10 @@ export class AuthService {
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as {
         userId: string;
-        ProjectId: string;
+        projectId: string;
       };
+      console.log("getUserFromToken decoded", decoded);
+
       const user = await this.db.collection("users").findOne({
         _id: new ObjectId(decoded.userId),
       });
@@ -223,9 +225,10 @@ export class AuthService {
       // Add ProjectId to user object for context
       return {
         ...user,
-        currentProjectId: decoded.ProjectId,
+        currentProjectId: decoded.projectId,
       };
     } catch (error) {
+      console.error("Error getting user from token");
       return null;
     }
   }
@@ -234,7 +237,7 @@ export class AuthService {
     apiKey: string
   ): Promise<{ userId: string; ProjectId: string } | null> {
     try {
-      const Project = await this.db.collection("Projects").findOne({
+      const Project = await this.db.collection("projects").findOne({
         apiKey,
         apiKeyExpiresAt: { $gt: new Date() },
       });

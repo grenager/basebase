@@ -72,11 +72,11 @@ const authTypeDefs = `
 
     # for authentication
     requestCode(phone: String!, name: String!): Boolean!
-    verifyCode(phone: String!, code: String!, ProjectApiKey: String!): String
+    verifyCode(phone: String!, code: String!, projectApiKey: String!): String
 
     # for project management
-    generateProjectApiKey(ProjectId: String!): Project!
-    revokeProjectApiKey(ProjectId: String!): Project!
+    generateProjectApiKey(projectId: String!): Project!
+    revokeProjectApiKey(projectId: String!): Project!
   }
 `;
 
@@ -292,6 +292,12 @@ const typeManagementResolvers = {
       const isAuthorized = !!context.currentUser;
       let result;
 
+      console.log(
+        "createFieldOnType",
+        context.currentUser,
+        context.currentUser?.currentProjectId
+      );
+
       try {
         if (!context.currentUser || !context.currentUser.currentProjectId) {
           throw new Error("Authentication and project selection required");
@@ -374,12 +380,14 @@ const authResolvers = {
           throw new Error("No project selected");
         }
 
-        const project = await context.db.collection("Projects").findOne({
+        const project = await context.db.collection("projects").findOne({
           _id: new ObjectId(context.currentUser.currentProjectId),
         });
 
         if (!project) {
-          throw new Error("Project not found");
+          throw new Error(
+            `Project not found for id ${context.currentUser.currentProjectId}`
+          );
         }
 
         result = {
@@ -455,8 +463,8 @@ const authResolvers = {
       {
         phone,
         code,
-        ProjectApiKey,
-      }: { phone: string; code: string; ProjectApiKey: string },
+        projectApiKey,
+      }: { phone: string; code: string; projectApiKey: string },
       context: GraphQLContext
     ) => {
       let result;
@@ -464,7 +472,7 @@ const authResolvers = {
         result = await context.authService.verifyPhoneAndCreateUser(
           phone,
           code,
-          ProjectApiKey
+          projectApiKey
         );
       } catch (error) {
         result = error;
@@ -472,7 +480,7 @@ const authResolvers = {
       } finally {
         logger.graphql(
           "verifyCode",
-          { phone, code: "[REDACTED]", ProjectApiKey: "[REDACTED]" },
+          { phone, code: "[REDACTED]", projectApiKey: "[REDACTED]" },
           true, // Auth not required for this mutation
           result
         );
@@ -482,7 +490,7 @@ const authResolvers = {
 
     generateProjectApiKey: async (
       _: any,
-      { ProjectId }: { ProjectId: string },
+      { projectId }: { projectId: string },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -494,13 +502,18 @@ const authResolvers = {
         }
 
         // Find the Project and verify ownership
-        const Project = await context.db.collection("Projects").findOne({
-          _id: new ObjectId(ProjectId),
-          creator: new ObjectId(context.currentUser._id),
+        const Project = await context.db.collection("projects").findOne({
+          _id: new ObjectId(projectId),
         });
 
         if (!Project) {
-          throw new Error("Project not found or you don't have permission");
+          throw new Error(`Project not found for id ${projectId}`);
+        }
+
+        if (Project.creator.toString() !== context.currentUser._id.toString()) {
+          throw new Error(
+            "You don't have permission to generate an API key for this project"
+          );
         }
 
         // Generate new API key
@@ -510,9 +523,9 @@ const authResolvers = {
 
         // Update the Project with new API key
         const updatedProject = await context.db
-          .collection("Projects")
+          .collection("projects")
           .findOneAndUpdate(
-            { _id: new ObjectId(ProjectId) },
+            { _id: new ObjectId(projectId) },
             {
               $set: {
                 apiKey,
@@ -523,14 +536,14 @@ const authResolvers = {
             { returnDocument: "after" }
           );
 
-        if (!updatedProject?.value) {
+        if (!updatedProject) {
           throw new Error("Failed to update Project");
         }
 
         result = {
-          ...updatedProject.value,
-          id: updatedProject.value._id.toString(),
-          creator: updatedProject.value.creator.toString(),
+          ...updatedProject,
+          id: updatedProject._id.toString(),
+          creator: updatedProject.creator.toString(),
         };
 
         return result;
@@ -540,7 +553,7 @@ const authResolvers = {
       } finally {
         logger.graphql(
           "generateProjectApiKey",
-          { ProjectId },
+          { projectId },
           isAuthorized,
           result
         );
@@ -549,7 +562,7 @@ const authResolvers = {
 
     revokeProjectApiKey: async (
       _: any,
-      { ProjectId }: { ProjectId: string },
+      { projectId }: { projectId: string },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -561,20 +574,26 @@ const authResolvers = {
         }
 
         // Find the Project and verify ownership
-        const Project = await context.db.collection("Projects").findOne({
-          _id: new ObjectId(ProjectId),
+        const Project = await context.db.collection("projects").findOne({
+          _id: new ObjectId(projectId),
           creator: new ObjectId(context.currentUser._id),
         });
 
         if (!Project) {
-          throw new Error("Project not found or you don't have permission");
+          throw new Error(`Project not found for id ${projectId}`);
+        }
+
+        if (Project.creator.toString() !== context.currentUser._id.toString()) {
+          throw new Error(
+            "You don't have permission to generate an API key for this project"
+          );
         }
 
         // Remove API key
         const updatedProject = await context.db
-          .collection("Projects")
+          .collection("projects")
           .findOneAndUpdate(
-            { _id: new ObjectId(ProjectId) },
+            { _id: new ObjectId(projectId) },
             {
               $set: {
                 apiKey: null,
@@ -585,14 +604,14 @@ const authResolvers = {
             { returnDocument: "after" }
           );
 
-        if (!updatedProject?.value) {
+        if (!updatedProject) {
           throw new Error("Failed to update Project");
         }
 
         result = {
-          ...updatedProject.value,
-          id: updatedProject.value._id.toString(),
-          creator: updatedProject.value.creator.toString(),
+          ...updatedProject,
+          id: updatedProject._id.toString(),
+          creator: updatedProject.creator.toString(),
         };
 
         return result;
@@ -602,7 +621,7 @@ const authResolvers = {
       } finally {
         logger.graphql(
           "revokeProjectApiKey",
-          { ProjectId },
+          { projectId },
           isAuthorized,
           result
         );
@@ -911,6 +930,7 @@ async function startServer() {
             }
           }
         }
+        // Note: currentUser can be null for unauthenticated requests like requestCode
 
         return {
           db,
