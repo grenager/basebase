@@ -2,14 +2,13 @@ import { AbilityBuilder, Ability } from "@casl/ability";
 import { Db, Collection, ObjectId } from "mongodb";
 
 export type Action = "manage" | "create" | "read" | "update" | "delete";
-export type Subject = "User" | "Post" | "all" | "App";
 
 export interface AuthorizationRule {
   _id?: ObjectId;
   name: string;
   description?: string;
   action: Action;
-  subject: Subject;
+  subject: string;
   conditions?: Record<string, any>;
   fields?: string[];
   inverted?: boolean; // for cannot rules
@@ -19,7 +18,7 @@ export interface AuthorizationRule {
   updatedAt: Date;
 }
 
-export type AppAbility = Ability<[Action, Subject]>;
+export type ProjectAbility = Ability<[Action, string]>;
 
 export class AuthorizationService {
   private rulesCollection: Collection<AuthorizationRule>;
@@ -52,10 +51,10 @@ export class AuthorizationService {
         isActive: true,
       },
       {
-        name: "app-manage-by-owner",
-        description: "Apps can only be modified or deleted by their owner",
+        name: "Project-manage-by-owner",
+        description: "Projects can only be modified or deleted by their owner",
         action: "manage",
-        subject: "App",
+        subject: "Project",
         conditions: { ownerId: "${user._id}" },
         priority: 100,
         isActive: true,
@@ -63,12 +62,12 @@ export class AuthorizationService {
       {
         name: "post-manage-by-creator",
         description:
-          "Posts can only be modified or deleted by their creator within the same app",
+          "Posts can only be modified or deleted by their creator within the same Project",
         action: "manage",
         subject: "Post",
         conditions: {
           creator: "${user._id}",
-          appId: "${user.currentAppId}",
+          ProjectId: "${user.currentProjectId}",
         },
         priority: 100,
         isActive: true,
@@ -76,20 +75,20 @@ export class AuthorizationService {
       {
         name: "authenticated-read-all",
         description:
-          "Authenticated users can read all resources within their current app",
+          "Authenticated users can read all resources within their current Project",
         action: "read",
         subject: "all",
-        conditions: { appId: "${user.currentAppId}" },
+        conditions: { ProjectId: "${user.currentProjectId}" },
         priority: 50,
         isActive: true,
       },
       {
         name: "authenticated-create-all",
         description:
-          "Authenticated users can create all resources within their current app",
+          "Authenticated users can create all resources within their current Project",
         action: "create",
         subject: "all",
-        conditions: { appId: "${user.currentAppId}" },
+        conditions: { ProjectId: "${user.currentProjectId}" },
         priority: 50,
         isActive: true,
       },
@@ -154,12 +153,12 @@ export class AuthorizationService {
     return result.deletedCount === 1;
   }
 
-  buildAbilityForUser(user: any): AppAbility {
+  buildAbilityForUser(user: any): ProjectAbility {
     return this.buildAbility(user);
   }
 
-  private buildAbility(user: any): AppAbility {
-    const { can, build } = new AbilityBuilder<AppAbility>(Ability);
+  private buildAbility(user: any): ProjectAbility {
+    const { can, build } = new AbilityBuilder<ProjectAbility>(Ability);
 
     // If no user, return empty ability
     if (!user) {
@@ -169,24 +168,24 @@ export class AuthorizationService {
     // Users can manage their own records
     can("manage", "User", { _id: user._id });
 
-    // Users can manage apps they own
-    can("manage", "App", { ownerId: user._id });
+    // Users can manage Projects they own
+    can("manage", "Project", { ownerId: user._id });
 
-    // Users can manage posts they created in their current app
+    // Users can manage posts they created in their current Project
     can("manage", "Post", {
       creator: user._id,
-      appId: user.currentAppId,
+      ProjectId: user.currentProjectId,
     });
 
-    // Users can read and create anything in their current app
-    can("read", "all", { appId: user.currentAppId });
-    can("create", "all", { appId: user.currentAppId });
+    // Users can read and create anything in their current Project
+    can("read", "all", { ProjectId: user.currentProjectId });
+    can("create", "all", { ProjectId: user.currentProjectId });
 
     return build();
   }
 
-  async buildDynamicAbilityForUser(user: any): Promise<AppAbility> {
-    const { can, cannot, build } = new AbilityBuilder<AppAbility>(Ability);
+  async buildDynamicAbilityForUser(user: any): Promise<ProjectAbility> {
+    const { can, cannot, build } = new AbilityBuilder<ProjectAbility>(Ability);
 
     if (!user) {
       return build();
@@ -220,10 +219,10 @@ export class AuthorizationService {
           /\${user\._id}/g,
           user._id?.toString()
         );
-        // Handle ${user.currentAppId}
+        // Handle ${user.currentProjectId}
         interpolated[key] = interpolated[key].replace(
-          /\${user\.currentAppId}/g,
-          user.currentAppId?.toString()
+          /\${user\.currentProjectId}/g,
+          user.currentProjectId?.toString()
         );
       } else if (typeof interpolated[key] === "object") {
         interpolated[key] = this.interpolateConditions(interpolated[key], user);
@@ -234,9 +233,9 @@ export class AuthorizationService {
   }
 
   checkPermission(
-    ability: AppAbility,
+    ability: ProjectAbility,
     action: Action,
-    subject: Subject,
+    subject: string,
     resource?: any,
     user?: any
   ): boolean {
@@ -261,9 +260,9 @@ export class AuthorizationService {
       return resourceId === userId;
     }
 
-    // Handle App subject - users can only manage apps they own
+    // Handle Project subject - users can only manage Projects they own
     if (
-      subject === "App" &&
+      subject === "Project" &&
       (action === "update" || action === "delete" || action === "manage")
     ) {
       const ownerId = resource.ownerId?.toString();
@@ -278,15 +277,15 @@ export class AuthorizationService {
     ) {
       const creatorId = resource.creator?.toString();
       const userId = user._id?.toString() || user.id?.toString();
-      // Also check if the user is using the app that owns the post
-      const appMatch =
-        resource.appId?.toString() === user.currentAppId?.toString();
-      return creatorId === userId && appMatch;
+      // Also check if the user is using the Project that owns the post
+      const ProjectMatch =
+        resource.ProjectId?.toString() === user.currentProjectId?.toString();
+      return creatorId === userId && ProjectMatch;
     }
 
-    // For other cases, check if the resource belongs to the current app
-    if (resource.appId && user.currentAppId) {
-      return resource.appId.toString() === user.currentAppId.toString();
+    // For other cases, check if the resource belongs to the current Project
+    if (resource.ProjectId && user.currentProjectId) {
+      return resource.ProjectId.toString() === user.currentProjectId.toString();
     }
 
     // For other cases, allow if the general permission exists
@@ -294,9 +293,9 @@ export class AuthorizationService {
   }
 
   assertPermission(
-    ability: AppAbility,
+    ability: ProjectAbility,
     action: Action,
-    subject: Subject,
+    subject: string,
     resource?: any,
     user?: any
   ): void {

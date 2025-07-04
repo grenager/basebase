@@ -28,22 +28,22 @@ async function main() {
     console.log("Connected to MongoDB");
 
     const db = client.db();
-    const apps = await db.collection("apps").find({}).toArray();
+    const projects = await db.collection("projects").find({}).toArray();
 
-    if (apps.length === 0) {
-      console.log("No apps found in the database");
+    if (projects.length === 0) {
+      console.log("No projects found in the database");
       return;
     }
 
-    console.log(`Found ${apps.length} apps`);
+    console.log(`Found ${projects.length} projects`);
 
-    for (const app of apps) {
+    for (const project of projects) {
       const apiKey = await generateApiKey();
       const apiKeyExpiresAt = new Date();
       apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
 
-      await db.collection("apps").updateOne(
-        { _id: app._id },
+      await db.collection("projects").updateOne(
+        { _id: project._id },
         {
           $set: {
             apiKey,
@@ -53,12 +53,12 @@ async function main() {
         }
       );
 
-      console.log(`Updated app ${app.name} (${app._id})`);
+      console.log(`Updated project ${project.name} (${project._id})`);
       console.log(`API Key: ${apiKey}`);
       console.log("---");
     }
 
-    console.log("All apps updated successfully");
+    console.log("All projects updated successfully");
   } catch (error) {
     console.error("Error:", error);
   } finally {

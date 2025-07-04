@@ -135,7 +135,7 @@ export class AuthService {
   async verifyPhoneAndCreateUser(
     phone: string,
     code: string,
-    appApiKey: string
+    ProjectApiKey: string
   ): Promise<string | null> {
     validatePhone(phone);
     const attempt = await this.verificationAttemptsCollection.findOne({
@@ -147,14 +147,14 @@ export class AuthService {
     }
 
     try {
-      // Verify app API key first
-      const app = await this.db.collection("apps").findOne({
-        apiKey: appApiKey,
+      // Verify Project API key first
+      const Project = await this.db.collection("Projects").findOne({
+        apiKey: ProjectApiKey,
         apiKeyExpiresAt: { $gt: new Date() },
       });
 
-      if (!app) {
-        throw new Error("Invalid or expired app API key");
+      if (!Project) {
+        throw new Error("Invalid or expired Project API key");
       }
 
       // Check if user already exists
@@ -188,16 +188,18 @@ export class AuthService {
         phone,
       });
 
-      // Generate JWT with both user and app ID
-      return this.generateToken(userId, app._id.toString());
+      // Generate JWT with both user and Project ID
+      return this.generateToken(userId, Project._id.toString());
     } catch (error) {
       console.error("Error creating/updating user:", error);
       return null;
     }
   }
 
-  generateToken(userId: string, appId: string): string {
-    return jwt.sign({ userId, appId }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  generateToken(userId: string, ProjectId: string): string {
+    return jwt.sign({ userId, ProjectId }, JWT_SECRET, {
+      expiresIn: JWT_EXPIRY,
+    });
   }
 
   async generateApiKey(): Promise<string> {
@@ -210,7 +212,7 @@ export class AuthService {
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as {
         userId: string;
-        appId: string;
+        ProjectId: string;
       };
       const user = await this.db.collection("users").findOne({
         _id: new ObjectId(decoded.userId),
@@ -218,10 +220,10 @@ export class AuthService {
 
       if (!user) return null;
 
-      // Add appId to user object for context
+      // Add ProjectId to user object for context
       return {
         ...user,
-        currentAppId: decoded.appId,
+        currentProjectId: decoded.ProjectId,
       };
     } catch (error) {
       return null;
@@ -230,18 +232,18 @@ export class AuthService {
 
   async validateApiKey(
     apiKey: string
-  ): Promise<{ userId: string; appId: string } | null> {
+  ): Promise<{ userId: string; ProjectId: string } | null> {
     try {
-      const app = await this.db.collection("apps").findOne({
+      const Project = await this.db.collection("Projects").findOne({
         apiKey,
         apiKeyExpiresAt: { $gt: new Date() },
       });
 
-      if (!app) return null;
+      if (!Project) return null;
 
       return {
-        userId: app.creator.toString(),
-        appId: app._id.toString(),
+        userId: Project.creator.toString(),
+        ProjectId: Project._id.toString(),
       };
     } catch (error) {
       return null;

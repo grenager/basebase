@@ -35,16 +35,16 @@ A NodeJS GraphQL server for everyone.
 
 ## Authentication
 
-### App Creation and API Key
+### Project Creation and API Key
 
-1. First, sign in to BaseBase and create an app:
+1. First, sign in to BaseBase and create an Project:
 
 ```graphql
 mutation {
-  createApp(
-    name: "My App"
-    description: "My awesome app"
-    githubUrl: "https://github.com/me/my-app"
+  createProject(
+    name: "My Project"
+    description: "My awesome Project"
+    githubUrl: "https://github.com/me/my-Project"
   ) {
     id
     name
@@ -57,21 +57,21 @@ mutation {
 
 ```graphql
 mutation {
-  generateAppApiKey(appId: "your_app_id") {
+  generateProjectApiKey(ProjectId: "your_Project_id") {
     apiKey # Save this immediately - you won't be able to see it again!
   }
 }
 ```
 
-### Implementing User Authentication in Your App
+### Implementing User Authentication in Your Project
 
-1. Add the BaseBase API key to your app's environment:
+1. Add the BaseBase API key to your Project's environment:
 
 ```env
 BASEBASE_API_KEY=your_api_key_here
 ```
 
-2. When a user wants to sign in to your app, start phone verification:
+2. When a user wants to sign in to your Project, start phone verification:
 
 ```graphql
 mutation {
@@ -79,19 +79,19 @@ mutation {
 }
 ```
 
-3. After the user receives their code, verify it server-side using your app's API key:
+3. After the user receives their code, verify it server-side using your Project's API key:
 
 ```graphql
 mutation {
   verifyCode(
     phone: "+1234567890"
     code: "123456" # The code received via SMS
-    appApiKey: "your_api_key" # Your app's API key
+    ProjectApiKey: "your_api_key" # Your Project's API key
   )
 }
 ```
 
-This returns a JWT token specific to both the user and your app. Store this token in the user's browser (e.g., localStorage) for future requests.
+This returns a JWT token specific to both the user and your Project. Store this token in the user's browser (e.g., localStorage) for future requests.
 
 ### Using Authentication
 
@@ -105,7 +105,7 @@ For API requests:
 }
 ```
 
-2. For server-to-server requests, use your app's API key:
+2. For server-to-server requests, use your Project's API key:
 
 ```json
 {
@@ -120,9 +120,9 @@ Notes:
 - Keep your tokens and API keys secure and never share them
 - One verification attempt per phone number at a time
 - Verification codes expire after 10 minutes
-- Each app gets its own authentication context
-- Users authenticated in one app cannot access resources from another app
-- API keys can be revoked using the `revokeAppApiKey` mutation if compromised
+- Each Project gets its own authentication context
+- Users authenticated in one Project cannot access resources from another Project
+- API keys can be revoked using the `revokeProjectApiKey` mutation if compromised
 
 ## GraphQL API
 

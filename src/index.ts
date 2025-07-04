@@ -21,7 +21,7 @@ interface GraphQLContext extends YogaInitialContext {
     name: string;
     phone: string;
     createdAt: Date;
-    currentAppId?: string;
+    currentProjectId?: string;
     [key: string]: any;
   } | null;
 }
@@ -40,10 +40,10 @@ interface AddFieldInput {
 // Load environment variables
 dotenv.config();
 
-const app = express();
+const Project = express();
 
 // Health check endpoint
-app.get("/", (_, res) => {
+Project.get("/", (_, res) => {
   res.json({
     status: "healthy",
     timestamp: new Date().toISOString(),
@@ -70,15 +70,15 @@ const client = new MongoClient(MONGODB_URI, {
 const authTypeDefs = `
   extend type Query {
     getMyUser: User
-    getMyApps: [App!]!
+    getMyProjects: [Project!]!
   }
   
   extend type Mutation {
     requestCode(phone: String!, name: String!): Boolean!
-    verifyCode(phone: String!, code: String!, appApiKey: String!): String
-    createApp(name: String!, description: String, githubUrl: String!): App!
-    generateAppApiKey(appId: String!): App!
-    revokeAppApiKey(appId: String!): App!
+    verifyCode(phone: String!, code: String!, ProjectApiKey: String!): String
+    createProject(name: String!, description: String, githubUrl: String!): Project!
+    generateProjectApiKey(ProjectId: String!): Project!
+    revokeProjectApiKey(ProjectId: String!): Project!
   }
 `;
 
@@ -105,7 +105,7 @@ const typeManagementTypeDefs = `
     "The GraphQL type (ID, String, Int, Boolean, Date, or custom type name)"
     type: String!
     
-    "Optional description that will appear in the GraphQL schema documentation"
+    "Optional description that will Projectear in the GraphQL schema documentation"
     description: String
     
     "Whether this field returns a list/array of values"
@@ -128,7 +128,7 @@ const typeManagementTypeDefs = `
     "The name of the new type (must be unique)"
     name: String!
     
-    "Optional description for the type that will appear in schema documentation"
+    "Optional description for the type that will Projectear in schema documentation"
     description: String
     
     "Array of field definitions for this type"
@@ -236,8 +236,8 @@ const typeManagementResolvers = {
       let result;
 
       try {
-        if (!isAuthorized) {
-          throw new Error("Authentication required");
+        if (!context.currentUser || !context.currentUser.currentProjectId) {
+          throw new Error("Authentication and project selection required");
         }
 
         // Check for reserved field names "id" and "creator"
@@ -264,7 +264,8 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
-          creator: new ObjectId(context.currentUser?._id),
+          creator: new ObjectId(context.currentUser._id),
+          projectId: new ObjectId(context.currentUser.currentProjectId),
         });
 
         if (errors.length > 0) {
@@ -275,7 +276,8 @@ const typeManagementResolvers = {
           name: input.name,
           description: input.description,
           fields: input.fields,
-          creator: new ObjectId(context.currentUser?._id),
+          creator: new ObjectId(context.currentUser._id),
+          projectId: new ObjectId(context.currentUser.currentProjectId),
         });
         result = true;
       } catch (error) {
@@ -297,8 +299,8 @@ const typeManagementResolvers = {
       let result;
 
       try {
-        if (!isAuthorized) {
-          throw new Error("Authentication required");
+        if (!context.currentUser || !context.currentUser.currentProjectId) {
+          throw new Error("Authentication and project selection required");
         }
 
         // Check for reserved field names "id" and "creator"
@@ -324,18 +326,19 @@ const typeManagementResolvers = {
           throw new Error(`Type "${input.typeName}" not found`);
         }
 
-        // Validate the new field
+        // Validate field references for the new field
         const errors = await typeManager.validateFieldReferences({
-          name: existingType.name,
-          description: existingType.description,
-          fields: [...existingType.fields, input.field],
-          creator: existingType.creator,
+          name: input.typeName,
+          fields: [input.field],
+          creator: new ObjectId(context.currentUser._id),
+          projectId: new ObjectId(context.currentUser.currentProjectId),
         });
 
         if (errors.length > 0) {
           throw new Error(`Validation errors: ${errors.join(", ")}`);
         }
 
+        // Add field to type
         await typeManager.updateGraphQLType(input.typeName, {
           fields: [...existingType.fields, input.field],
         });
@@ -380,7 +383,7 @@ const authResolvers = {
       }
     },
 
-    getMyApps: async (_: any, __: any, context: GraphQLContext) => {
+    getMyProjects: async (_: any, __: any, context: GraphQLContext) => {
       const isAuthorized = !!context.currentUser;
       let result;
 
@@ -389,17 +392,17 @@ const authResolvers = {
           throw new Error("Authentication required");
         }
 
-        const apps = await context.db
-          .collection("apps")
+        const Projects = await context.db
+          .collection("Projects")
           .find({
             creator: new ObjectId(context.currentUser._id),
           })
           .toArray();
 
-        result = apps.map((app) => ({
-          ...app,
-          id: app._id.toString(),
-          creator: app.creator.toString(),
+        result = Projects.map((Project) => ({
+          ...Project,
+          id: Project._id.toString(),
+          creator: Project.creator.toString(),
         }));
 
         return result;
@@ -407,7 +410,7 @@ const authResolvers = {
         result = error;
         throw error;
       } finally {
-        logger.graphql("getMyApps", {}, isAuthorized, result);
+        logger.graphql("getMyProjects", {}, isAuthorized, result);
       }
     },
   },
@@ -440,8 +443,8 @@ const authResolvers = {
       {
         phone,
         code,
-        appApiKey,
-      }: { phone: string; code: string; appApiKey: string },
+        ProjectApiKey,
+      }: { phone: string; code: string; ProjectApiKey: string },
       context: GraphQLContext
     ) => {
       let result;
@@ -449,7 +452,7 @@ const authResolvers = {
         result = await context.authService.verifyPhoneAndCreateUser(
           phone,
           code,
-          appApiKey
+          ProjectApiKey
         );
       } catch (error) {
         result = error;
@@ -457,7 +460,7 @@ const authResolvers = {
       } finally {
         logger.graphql(
           "verifyCode",
-          { phone, code: "[REDACTED]", appApiKey: "[REDACTED]" },
+          { phone, code: "[REDACTED]", ProjectApiKey: "[REDACTED]" },
           true, // Auth not required for this mutation
           result
         );
@@ -465,7 +468,7 @@ const authResolvers = {
       return result;
     },
 
-    createApp: async (
+    createProject: async (
       _: any,
       {
         name,
@@ -483,7 +486,7 @@ const authResolvers = {
         }
 
         const now = new Date();
-        const app = {
+        const Project = {
           name,
           description,
           githubUrl,
@@ -493,33 +496,35 @@ const authResolvers = {
         };
 
         const { insertedId } = await context.db
-          .collection("apps")
-          .insertOne(app);
+          .collection("Projects")
+          .insertOne(Project);
 
         // Generate initial API key
         const apiKey = await context.authService.generateApiKey();
         const apiKeyExpiresAt = new Date();
         apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
 
-        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
-          { _id: insertedId },
-          {
-            $set: {
-              apiKey,
-              apiKeyExpiresAt,
+        const updatedProject = await context.db
+          .collection("Projects")
+          .findOneAndUpdate(
+            { _id: insertedId },
+            {
+              $set: {
+                apiKey,
+                apiKeyExpiresAt,
+              },
             },
-          },
-          { returnDocument: "after" }
-        );
+            { returnDocument: "after" }
+          );
 
-        if (!updatedApp?.value) {
-          throw new Error("Failed to update app");
+        if (!updatedProject?.value) {
+          throw new Error("Failed to update Project");
         }
 
         result = {
-          ...updatedApp.value,
-          id: updatedApp.value._id.toString(),
-          creator: updatedApp.value.creator.toString(),
+          ...updatedProject.value,
+          id: updatedProject.value._id.toString(),
+          creator: updatedProject.value.creator.toString(),
         };
 
         return result;
@@ -528,7 +533,7 @@ const authResolvers = {
         throw error;
       } finally {
         logger.graphql(
-          "createApp",
+          "createProject",
           { name, description, githubUrl },
           isAuthorized,
           result
@@ -536,9 +541,9 @@ const authResolvers = {
       }
     },
 
-    generateAppApiKey: async (
+    generateProjectApiKey: async (
       _: any,
-      { appId }: { appId: string },
+      { ProjectId }: { ProjectId: string },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -549,14 +554,14 @@ const authResolvers = {
           throw new Error("Authentication required");
         }
 
-        // Find the app and verify ownership
-        const app = await context.db.collection("apps").findOne({
-          _id: new ObjectId(appId),
+        // Find the Project and verify ownership
+        const Project = await context.db.collection("Projects").findOne({
+          _id: new ObjectId(ProjectId),
           creator: new ObjectId(context.currentUser._id),
         });
 
-        if (!app) {
-          throw new Error("App not found or you don't have permission");
+        if (!Project) {
+          throw new Error("Project not found or you don't have permission");
         }
 
         // Generate new API key
@@ -564,27 +569,29 @@ const authResolvers = {
         const apiKeyExpiresAt = new Date();
         apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
 
-        // Update the app with new API key
-        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
-          { _id: new ObjectId(appId) },
-          {
-            $set: {
-              apiKey,
-              apiKeyExpiresAt,
-              updatedAt: new Date(),
+        // Update the Project with new API key
+        const updatedProject = await context.db
+          .collection("Projects")
+          .findOneAndUpdate(
+            { _id: new ObjectId(ProjectId) },
+            {
+              $set: {
+                apiKey,
+                apiKeyExpiresAt,
+                updatedAt: new Date(),
+              },
             },
-          },
-          { returnDocument: "after" }
-        );
+            { returnDocument: "after" }
+          );
 
-        if (!updatedApp?.value) {
-          throw new Error("Failed to update app");
+        if (!updatedProject?.value) {
+          throw new Error("Failed to update Project");
         }
 
         result = {
-          ...updatedApp.value,
-          id: updatedApp.value._id.toString(),
-          creator: updatedApp.value.creator.toString(),
+          ...updatedProject.value,
+          id: updatedProject.value._id.toString(),
+          creator: updatedProject.value.creator.toString(),
         };
 
         return result;
@@ -592,13 +599,18 @@ const authResolvers = {
         result = error;
         throw error;
       } finally {
-        logger.graphql("generateAppApiKey", { appId }, isAuthorized, result);
+        logger.graphql(
+          "generateProjectApiKey",
+          { ProjectId },
+          isAuthorized,
+          result
+        );
       }
     },
 
-    revokeAppApiKey: async (
+    revokeProjectApiKey: async (
       _: any,
-      { appId }: { appId: string },
+      { ProjectId }: { ProjectId: string },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -609,37 +621,39 @@ const authResolvers = {
           throw new Error("Authentication required");
         }
 
-        // Find the app and verify ownership
-        const app = await context.db.collection("apps").findOne({
-          _id: new ObjectId(appId),
+        // Find the Project and verify ownership
+        const Project = await context.db.collection("Projects").findOne({
+          _id: new ObjectId(ProjectId),
           creator: new ObjectId(context.currentUser._id),
         });
 
-        if (!app) {
-          throw new Error("App not found or you don't have permission");
+        if (!Project) {
+          throw new Error("Project not found or you don't have permission");
         }
 
         // Remove API key
-        const updatedApp = await context.db.collection("apps").findOneAndUpdate(
-          { _id: new ObjectId(appId) },
-          {
-            $set: {
-              apiKey: null,
-              apiKeyExpiresAt: null,
-              updatedAt: new Date(),
+        const updatedProject = await context.db
+          .collection("Projects")
+          .findOneAndUpdate(
+            { _id: new ObjectId(ProjectId) },
+            {
+              $set: {
+                apiKey: null,
+                apiKeyExpiresAt: null,
+                updatedAt: new Date(),
+              },
             },
-          },
-          { returnDocument: "after" }
-        );
+            { returnDocument: "after" }
+          );
 
-        if (!updatedApp?.value) {
-          throw new Error("Failed to update app");
+        if (!updatedProject?.value) {
+          throw new Error("Failed to update Project");
         }
 
         result = {
-          ...updatedApp.value,
-          id: updatedApp.value._id.toString(),
-          creator: updatedApp.value.creator.toString(),
+          ...updatedProject.value,
+          id: updatedProject.value._id.toString(),
+          creator: updatedProject.value.creator.toString(),
         };
 
         return result;
@@ -647,7 +661,12 @@ const authResolvers = {
         result = error;
         throw error;
       } finally {
-        logger.graphql("revokeAppApiKey", { appId }, isAuthorized, result);
+        logger.graphql(
+          "revokeProjectApiKey",
+          { ProjectId },
+          isAuthorized,
+          result
+        );
       }
     },
   },
@@ -844,16 +863,17 @@ async function getDynamicSchema() {
         },
       ],
       creator: new ObjectId("000000000000000000000000"), // System-created type
+      projectId: new ObjectId("000000000000000000000000"), // System-created type
     });
   }
 
-  // Ensure App type exists
-  const appType = await typeManager.getGraphQLTypeByName("App");
-  if (!appType) {
-    console.log("Creating default App type...");
+  // Ensure Project type exists
+  const projectType = await typeManager.getGraphQLTypeByName("Project");
+  if (!projectType) {
+    console.log("Creating default Project type...");
     await typeManager.addGraphQLType({
-      name: "App",
-      description: "An application in the system",
+      name: "Project",
+      description: "A project that contains types and data",
       fields: [
         { name: "name", type: "String", isList: false, isRequired: true },
         {
@@ -862,7 +882,12 @@ async function getDynamicSchema() {
           isList: false,
           isRequired: false,
         },
-        { name: "githubUrl", type: "String", isList: false, isRequired: true },
+        {
+          name: "githubUrl",
+          type: "String",
+          isList: false,
+          isRequired: false,
+        },
         { name: "apiKey", type: "String", isList: false, isRequired: false },
         {
           name: "apiKeyExpiresAt",
@@ -872,6 +897,7 @@ async function getDynamicSchema() {
         },
       ],
       creator: new ObjectId("000000000000000000000000"), // System-created type
+      projectId: new ObjectId("000000000000000000000000"), // System-created type
     });
   }
 
@@ -884,8 +910,8 @@ async function getDynamicSchema() {
   const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
     generateSchema(types);
 
-  console.log("Base type definitions:", baseTypeDefs);
-  console.log("Generated type definitions:", generatedTypeDefs);
+  // console.log("Base type definitions:", baseTypeDefs);
+  // console.log("Generated type definitions:", generatedTypeDefs);
 
   const schema = createSchema<GraphQLContext>({
     typeDefs: [
@@ -942,7 +968,7 @@ async function startServer() {
               _id: new ObjectId(auth.userId),
             });
             if (currentUser) {
-              currentUser.currentAppId = auth.appId;
+              currentUser.currentProjectId = auth.ProjectId;
             }
           }
         }
@@ -977,7 +1003,7 @@ async function startServer() {
 
       if (url.pathname === "/") {
         // Handle health check with Express
-        return app(req, res);
+        return Project(req, res);
       }
 
       // Handle GraphQL with Yoga
