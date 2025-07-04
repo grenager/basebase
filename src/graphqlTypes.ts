@@ -20,6 +20,7 @@ export interface GraphQLFieldDefinition {
   isRequired: boolean;
   isListItemRequired?: boolean; // For [String!] vs [String]
   refType?: string; // For ID fields, specifies the referenced type
+  unique?: boolean; // Whether this field should have a unique index in MongoDB
 }
 
 export interface GraphQLTypeDefinition {
@@ -36,7 +37,7 @@ export interface GraphQLTypeDefinition {
 export class GraphQLTypeManager {
   private typesCollection: Collection<GraphQLTypeDefinition>;
 
-  constructor(db: Db) {
+  constructor(private db: Db) {
     this.typesCollection = db.collection("graphqlTypes");
   }
 
@@ -73,6 +74,16 @@ export class GraphQLTypeManager {
     };
 
     await this.typesCollection.insertOne(typeWithDefaults);
+
+    // Create collection for the new type
+    const collectionName = type.name.toLowerCase();
+    const collection = this.db.collection(collectionName);
+
+    // Create unique indexes for fields marked as unique
+    const uniqueFields = type.fields.filter((field) => field.unique);
+    for (const field of uniqueFields) {
+      await collection.createIndex({ [field.name]: 1 }, { unique: true });
+    }
   }
 
   // Get all GraphQL types
@@ -110,6 +121,18 @@ export class GraphQLTypeManager {
         },
       }
     );
+
+    // If fields were updated, update indexes
+    if (update.fields) {
+      const collectionName = typeName.toLowerCase();
+      const collection = this.db.collection(collectionName);
+
+      // Create unique indexes for new unique fields
+      const uniqueFields = update.fields.filter((field) => field.unique);
+      for (const field of uniqueFields) {
+        await collection.createIndex({ [field.name]: 1 }, { unique: true });
+      }
+    }
   }
 
   // Delete a GraphQL type

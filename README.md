@@ -126,4 +126,71 @@ Notes:
 
 ## GraphQL API
 
-The server will be running at `
+The server will be running at `http://localhost:4000/graphql` by default.
+
+### Type Management
+
+You can dynamically create and manage GraphQL types using the following mutations:
+
+1. Create a new type:
+
+```graphql
+mutation {
+  createType(
+    input: {
+      name: "Product"
+      description: "A product in the catalog"
+      fields: [
+        {
+          name: "sku"
+          type: "String"
+          description: "Product SKU"
+          isList: false
+          isRequired: true
+          unique: true # This field will have a unique index in MongoDB
+        }
+        {
+          name: "name"
+          type: "String"
+          description: "Product name"
+          isList: false
+          isRequired: true
+        }
+      ]
+    }
+  )
+}
+```
+
+Field Properties:
+
+- `name`: The name of the field (required)
+- `type`: The field type - can be a built-in scalar (ID, String, Int, Float, Boolean, Date) or a custom type name (required)
+- `description`: Optional description for documentation
+- `isList`: Whether the field is an array/list
+- `isRequired`: Whether the field is required (non-null)
+- `isListItemRequired`: For list fields, whether individual items are required
+- `refType`: For ID fields, specifies which type this ID references
+- `unique`: Whether this field should have a unique index in MongoDB (optional)
+
+2. Add a field to an existing type:
+
+```graphql
+mutation {
+  createFieldOnType(
+    input: {
+      typeName: "Product"
+      field: {
+        name: "barcode"
+        type: "String"
+        description: "Product barcode"
+        isList: false
+        isRequired: true
+        unique: true # This field will have a unique index in MongoDB
+      }
+    }
+  )
+}
+```
+
+Note: When a field is marked as `unique: true`, the system automatically creates a unique index for that field in MongoDB. This ensures that no two documents in the collection can have the same value for that field.
