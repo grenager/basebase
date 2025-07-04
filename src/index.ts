@@ -70,13 +70,15 @@ const client = new MongoClient(MONGODB_URI, {
 const authTypeDefs = `
   extend type Query {
     getMyUser: User
-    getMyProjects: [Project!]!
   }
   
   extend type Mutation {
+
+    # for authentication
     requestCode(phone: String!, name: String!): Boolean!
     verifyCode(phone: String!, code: String!, ProjectApiKey: String!): String
-    createProject(name: String!, description: String, githubUrl: String!): Project!
+
+    # for project management
     generateProjectApiKey(ProjectId: String!): Project!
     revokeProjectApiKey(ProjectId: String!): Project!
   }
@@ -382,37 +384,6 @@ const authResolvers = {
         logger.graphql("getMyUser", {}, isAuthorized, result);
       }
     },
-
-    getMyProjects: async (_: any, __: any, context: GraphQLContext) => {
-      const isAuthorized = !!context.currentUser;
-      let result;
-
-      try {
-        if (!isAuthorized || !context.currentUser) {
-          throw new Error("Authentication required");
-        }
-
-        const Projects = await context.db
-          .collection("Projects")
-          .find({
-            creator: new ObjectId(context.currentUser._id),
-          })
-          .toArray();
-
-        result = Projects.map((Project) => ({
-          ...Project,
-          id: Project._id.toString(),
-          creator: Project.creator.toString(),
-        }));
-
-        return result;
-      } catch (error) {
-        result = error;
-        throw error;
-      } finally {
-        logger.graphql("getMyProjects", {}, isAuthorized, result);
-      }
-    },
   },
 
   Mutation: {
@@ -466,79 +437,6 @@ const authResolvers = {
         );
       }
       return result;
-    },
-
-    createProject: async (
-      _: any,
-      {
-        name,
-        description,
-        githubUrl,
-      }: { name: string; description?: string; githubUrl: string },
-      context: GraphQLContext
-    ) => {
-      const isAuthorized = !!context.currentUser;
-      let result;
-
-      try {
-        if (!isAuthorized || !context.currentUser) {
-          throw new Error("Authentication required");
-        }
-
-        const now = new Date();
-        const Project = {
-          name,
-          description,
-          githubUrl,
-          creator: new ObjectId(context.currentUser._id),
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        const { insertedId } = await context.db
-          .collection("Projects")
-          .insertOne(Project);
-
-        // Generate initial API key
-        const apiKey = await context.authService.generateApiKey();
-        const apiKeyExpiresAt = new Date();
-        apiKeyExpiresAt.setFullYear(apiKeyExpiresAt.getFullYear() + 1); // 1 year expiry
-
-        const updatedProject = await context.db
-          .collection("Projects")
-          .findOneAndUpdate(
-            { _id: insertedId },
-            {
-              $set: {
-                apiKey,
-                apiKeyExpiresAt,
-              },
-            },
-            { returnDocument: "after" }
-          );
-
-        if (!updatedProject?.value) {
-          throw new Error("Failed to update Project");
-        }
-
-        result = {
-          ...updatedProject.value,
-          id: updatedProject.value._id.toString(),
-          creator: updatedProject.value.creator.toString(),
-        };
-
-        return result;
-      } catch (error) {
-        result = error;
-        throw error;
-      } finally {
-        logger.graphql(
-          "createProject",
-          { name, description, githubUrl },
-          isAuthorized,
-          result
-        );
-      }
     },
 
     generateProjectApiKey: async (
