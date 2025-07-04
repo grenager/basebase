@@ -5,11 +5,7 @@ import dotenv from "dotenv";
 import { createServer } from "node:http";
 import { createSchema } from "graphql-yoga";
 
-import {
-  GraphQLTypeDefinition,
-  GraphQLField,
-  GraphQLTypeManager,
-} from "./graphqlTypes";
+import { GraphQLField, GraphQLTypeManager } from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
 import { AuthService } from "./services/auth";
 import { AuthorizationService } from "./services/authorization";
@@ -34,18 +30,6 @@ interface CreateTypeInput {
   name: string;
   description?: string;
   fields: GraphQLField[];
-}
-
-interface AddFieldInput {
-  typeName: string;
-  name: string;
-  type: string;
-  description?: string;
-  isList: boolean;
-  isRequired: boolean;
-  isListItemRequired: boolean;
-  refType: string;
-  unique: boolean;
 }
 
 // Load environment variables
@@ -81,6 +65,7 @@ const client = new MongoClient(MONGODB_URI, {
 const authTypeDefs = `
   extend type Query {
     getMyUser: User
+    getMyProject: Project
   }
   
   extend type Mutation {
@@ -379,6 +364,45 @@ const typeManagementResolvers = {
 
 const authResolvers = {
   Query: {
+    getMyProject: async (_: any, __: any, context: GraphQLContext) => {
+      const isAuthorized = !!context.currentUser;
+      let result;
+
+      try {
+        if (!isAuthorized || !context.currentUser) {
+          throw new Error("Authentication required");
+        }
+
+        if (!context.currentUser.currentProjectId) {
+          throw new Error("No project selected");
+        }
+
+        const project = await context.db.collection("Projects").findOne({
+          _id: new ObjectId(context.currentUser.currentProjectId),
+        });
+
+        if (!project) {
+          throw new Error("Project not found");
+        }
+
+        result = {
+          id: project._id.toString(),
+          name: project.name,
+          description: project.description || null,
+          githubUrl: project.githubUrl || null,
+          apiKey: project.apiKey || null,
+          apiKeyExpiresAt: project.apiKeyExpiresAt || null,
+          creator: project.creator.toString(),
+        };
+        return result;
+      } catch (error) {
+        result = error;
+        throw error;
+      } finally {
+        logger.graphql("getMyProject", {}, isAuthorized, result);
+      }
+    },
+
     getMyUser: async (_: any, __: any, context: GraphQLContext) => {
       const isAuthorized = !!context.currentUser;
       let result;

@@ -24,6 +24,15 @@ export interface GraphQLField {
   unique?: boolean;
 }
 
+export interface GraphQLFieldDefinition {
+  name: string;
+  type: string;
+  description?: string;
+  isList: boolean;
+  isRequired: boolean;
+  isListItemRequired?: boolean;
+}
+
 export interface GraphQLTypeDefinition {
   _id?: ObjectId;
   name: string;
