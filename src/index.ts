@@ -797,98 +797,109 @@ const authorizationResolvers = {
 };
 
 async function getDynamicSchema() {
-  const db = client.db();
-  const typeManager = new GraphQLTypeManager(db);
+  try {
+    console.log("Starting schema generation...");
 
-  console.log("Starting schema generation...");
+    const db = client.db();
+    const typeManager = new GraphQLTypeManager(db);
 
-  // Ensure User type exists
-  const userType = await typeManager.getGraphQLTypeByName("User");
-  if (!userType) {
-    console.log("Creating default User type...");
-    await typeManager.addGraphQLType({
-      name: "User",
-      description: "A user in the system",
-      fields: [
-        { name: "name", type: "String", isList: false, isRequired: true },
-        { name: "phone", type: "String", isList: false, isRequired: true },
-        { name: "email", type: "String", isList: false, isRequired: false },
-        {
-          name: "profileImageUrl",
-          type: "String",
-          isList: false,
-          isRequired: false,
-        },
+    // Ensure User type exists
+    const userType = await typeManager.getGraphQLTypeByName("User");
+    if (!userType) {
+      console.log("Creating default User type...");
+      await typeManager.addGraphQLType({
+        name: "User",
+        description: "A user in the system",
+        fields: [
+          { name: "name", type: "String", isList: false, isRequired: true },
+          { name: "phone", type: "String", isList: false, isRequired: true },
+          { name: "email", type: "String", isList: false, isRequired: false },
+          {
+            name: "profileImageUrl",
+            type: "String",
+            isList: false,
+            isRequired: false,
+          },
+        ],
+        creator: new ObjectId("000000000000000000000000"), // System-created type
+        projectId: new ObjectId("000000000000000000000000"), // System-created type
+      });
+    }
+
+    // Ensure Project type exists
+    const projectType = await typeManager.getGraphQLTypeByName("Project");
+    if (!projectType) {
+      console.log("Creating default Project type...");
+      await typeManager.addGraphQLType({
+        name: "Project",
+        description: "A project that contains types and data",
+        fields: [
+          { name: "name", type: "String", isList: false, isRequired: true },
+          {
+            name: "description",
+            type: "String",
+            isList: false,
+            isRequired: false,
+          },
+          {
+            name: "githubUrl",
+            type: "String",
+            isList: false,
+            isRequired: false,
+          },
+          { name: "apiKey", type: "String", isList: false, isRequired: false },
+          {
+            name: "apiKeyExpiresAt",
+            type: "Date",
+            isList: false,
+            isRequired: false,
+          },
+        ],
+        creator: new ObjectId("000000000000000000000000"), // System-created type
+        projectId: new ObjectId("000000000000000000000000"), // System-created type
+      });
+    }
+
+    const types = await typeManager.getGraphQLTypes();
+    console.log(
+      "Loaded types from database:",
+      types.map((t) => t.name)
+    );
+
+    console.log("Generating schema from types...");
+    const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
+      generateSchema(types);
+
+    console.log("Generated typeDefs length:", generatedTypeDefs.length);
+    console.log("Generated resolvers keys:", Object.keys(generatedResolvers));
+
+    console.log("Creating GraphQL schema...");
+    const schema = createSchema<GraphQLContext>({
+      typeDefs: [
+        baseTypeDefs,
+        generatedTypeDefs,
+        authTypeDefs,
+        typeManagementTypeDefs,
+        authorizationTypeDefs,
       ],
-      creator: new ObjectId("000000000000000000000000"), // System-created type
-      projectId: new ObjectId("000000000000000000000000"), // System-created type
-    });
-  }
-
-  // Ensure Project type exists
-  const projectType = await typeManager.getGraphQLTypeByName("Project");
-  if (!projectType) {
-    console.log("Creating default Project type...");
-    await typeManager.addGraphQLType({
-      name: "Project",
-      description: "A project that contains types and data",
-      fields: [
-        { name: "name", type: "String", isList: false, isRequired: true },
-        {
-          name: "description",
-          type: "String",
-          isList: false,
-          isRequired: false,
-        },
-        {
-          name: "githubUrl",
-          type: "String",
-          isList: false,
-          isRequired: false,
-        },
-        { name: "apiKey", type: "String", isList: false, isRequired: false },
-        {
-          name: "apiKeyExpiresAt",
-          type: "Date",
-          isList: false,
-          isRequired: false,
-        },
+      resolvers: [
+        generatedResolvers,
+        authResolvers,
+        typeManagementResolvers,
+        authorizationResolvers,
       ],
-      creator: new ObjectId("000000000000000000000000"), // System-created type
-      projectId: new ObjectId("000000000000000000000000"), // System-created type
     });
+
+    console.log("Schema created successfully");
+    return schema;
+  } catch (error) {
+    console.error("Error in getDynamicSchema:", error);
+    console.error(
+      "Error stack:",
+      error instanceof Error ? error.stack : "No stack trace"
+    );
+    throw error;
   }
-
-  const types = await typeManager.getGraphQLTypes();
-  console.log(
-    "Loaded types from database:",
-    types.map((t) => t.name)
-  );
-
-  const { typeDefs: generatedTypeDefs, resolvers: generatedResolvers } =
-    generateSchema(types);
-
-  // console.log("Base type definitions:", baseTypeDefs);
-  // console.log("Generated type definitions:", generatedTypeDefs);
-
-  const schema = createSchema<GraphQLContext>({
-    typeDefs: [
-      baseTypeDefs,
-      generatedTypeDefs,
-      authTypeDefs,
-      typeManagementTypeDefs,
-      authorizationTypeDefs,
-    ],
-    resolvers: [
-      generatedResolvers,
-      authResolvers,
-      typeManagementResolvers,
-      authorizationResolvers,
-    ],
-  });
-
-  console.log("Schema created successfully");
-  return schema;
 }
 
 async function startServer() {
@@ -911,36 +922,48 @@ async function startServer() {
     const yoga = createYoga<GraphQLContext>({
       schema: getDynamicSchema,
       context: async ({ request }) => {
-        // Extract token from Authorization header
-        const authHeader = request.headers.get("authorization");
-        let currentUser = null;
+        try {
+          // Extract token from Authorization header
+          const authHeader = request.headers.get("authorization");
+          let currentUser = null;
 
-        if (authHeader?.startsWith("Bearer ")) {
-          const token = authHeader.split("Bearer ")[1];
-          currentUser = await authService.getUserFromToken(token);
-        } else if (authHeader?.startsWith("ApiKey ")) {
-          const apiKey = authHeader.split("ApiKey ")[1];
-          const auth = await authService.validateApiKey(apiKey);
-          if (auth) {
-            currentUser = await db.collection("users").findOne({
-              _id: new ObjectId(auth.userId),
-            });
-            if (currentUser) {
-              currentUser.currentProjectId = auth.ProjectId;
+          if (authHeader?.startsWith("Bearer ")) {
+            const token = authHeader.split("Bearer ")[1];
+            currentUser = await authService.getUserFromToken(token);
+          } else if (authHeader?.startsWith("ApiKey ")) {
+            const apiKey = authHeader.split("ApiKey ")[1];
+            const auth = await authService.validateApiKey(apiKey);
+            if (auth) {
+              currentUser = await db.collection("users").findOne({
+                _id: new ObjectId(auth.userId),
+              });
+              if (currentUser) {
+                currentUser.currentProjectId = auth.ProjectId;
+              }
             }
           }
-        }
-        // Note: currentUser can be null for unauthenticated requests like requestCode
+          // Note: currentUser can be null for unauthenticated requests like requestCode
 
-        return {
-          db,
-          authService,
-          authorizationService,
-          currentUser,
-        };
+          return {
+            db,
+            authService,
+            authorizationService,
+            currentUser,
+          };
+        } catch (error) {
+          console.error("Error in context function:", error);
+          console.error(
+            "Error stack:",
+            error instanceof Error ? error.stack : "No stack trace"
+          );
+          throw error;
+        }
       },
       maskedErrors: {
         maskError: ((error: Error) => {
+          console.error("GraphQL error occurred:", error);
+          console.error("Error stack:", error.stack);
+
           // Handle authentication errors specifically
           if (error.message === "Authentication required") {
             return {
@@ -958,15 +981,33 @@ async function startServer() {
 
     // Create server that handles both Express and GraphQL
     const server = createServer(async (req, res) => {
-      const url = new URL(req.url || "/", `http://${req.headers.host}`);
+      try {
+        const url = new URL(req.url || "/", `http://${req.headers.host}`);
+        console.log(`Request: ${req.method} ${url.pathname}`);
 
-      if (url.pathname === "/") {
-        // Handle health check with Express
-        return Project(req, res);
+        if (url.pathname === "/") {
+          // Handle health check with Express
+          return Project(req, res);
+        }
+
+        // Handle GraphQL with Yoga
+        return yoga(req, res);
+      } catch (error) {
+        console.error("Error handling request:", error);
+        console.error(
+          "Error stack:",
+          error instanceof Error ? error.stack : "No stack trace"
+        );
+
+        // Send 500 error response
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "Internal Server Error",
+            message: error instanceof Error ? error.message : "Unknown error",
+          })
+        );
       }
-
-      // Handle GraphQL with Yoga
-      return yoga(req, res);
     });
 
     // Start the server
