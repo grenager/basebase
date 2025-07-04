@@ -12,22 +12,23 @@ export type GraphQLScalarType =
 
 const RESERVED_FIELD_NAMES = ["id", "creator", "createdAt", "updatedAt"];
 
-export interface GraphQLFieldDefinition {
+// Import this from the GraphQL schema definition
+export interface GraphQLField {
   name: string;
-  type: GraphQLScalarType | string; // string for custom types
-  description?: string; // Field description for GraphQL documentation
+  type: GraphQLScalarType | string;
+  description?: string;
   isList: boolean;
   isRequired: boolean;
-  isListItemRequired?: boolean; // For [String!] vs [String]
-  refType?: string; // For ID fields, specifies the referenced type
-  unique?: boolean; // Whether this field should have a unique index in MongoDB
+  isListItemRequired?: boolean;
+  refType?: string;
+  unique?: boolean;
 }
 
 export interface GraphQLTypeDefinition {
   _id?: ObjectId;
   name: string;
   description?: string;
-  fields: GraphQLFieldDefinition[];
+  fields: GraphQLField[];
   creator: ObjectId;
   projectId: ObjectId;
   createdAt?: Date;
@@ -41,7 +42,7 @@ export class GraphQLTypeManager {
     this.typesCollection = db.collection("graphqlTypes");
   }
 
-  private validateNoReservedFields(fields: GraphQLFieldDefinition[]): string[] {
+  private validateNoReservedFields(fields: GraphQLField[]): string[] {
     const errors: string[] = [];
 
     for (const field of fields) {

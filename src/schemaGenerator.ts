@@ -155,10 +155,23 @@ function generateQueryType(types: GraphQLTypeDefinition[]): string {
   const queries = types
     .map((type) => {
       const typeName = type.name;
-      return [
-        `"""Get a single ${typeName} by ID"""\n  get${typeName}(id: ID!): ${typeName}`,
+      const uniqueFields = type.fields.filter((field) => field.unique);
+
+      // Generate get{Type} query with all unique fields as optional parameters
+      const uniqueFieldParams = uniqueFields
+        .map((field) => `${field.name}: ${field.type}`)
+        .join(", ");
+
+      const params = uniqueFieldParams
+        ? `id: ID, ${uniqueFieldParams}`
+        : "id: ID!";
+
+      const baseQueries = [
+        `"""Get a single ${typeName} by ID or any unique field"""\n  get${typeName}(${params}): ${typeName}`,
         `"""Get all ${typeName}s, optionally filtered"""\n  get${typeName}s(filter: JSON): [${typeName}!]!`,
       ];
+
+      return baseQueries;
     })
     .flat()
     .join("\n\n  ");
@@ -279,16 +292,39 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
     Query: {
       [`get${typeName}`]: async (
         _: any,
-        { id }: { id: string },
+        args: Record<string, any>,
         context: any
       ) => {
         if (!context.currentUser) {
           throw new Error("Authentication required");
         }
 
-        const doc = await context.db.collection(collectionName).findOne({
-          _id: new ObjectId(id),
-        });
+        // Get all unique fields for this type
+        const uniqueFields = type.fields.filter((field) => field.unique);
+
+        // Build query based on provided parameters
+        const query: Record<string, any> = {};
+
+        if (args.id) {
+          query._id = new ObjectId(args.id);
+        } else {
+          // Check if any unique field was provided
+          const providedUniqueField = uniqueFields.find(
+            (field) => args[field.name] !== undefined
+          );
+
+          if (!providedUniqueField) {
+            throw new Error(
+              `Must provide either id or one of the unique fields: ${uniqueFields
+                .map((f) => f.name)
+                .join(", ")}`
+            );
+          }
+
+          query[providedUniqueField.name] = args[providedUniqueField.name];
+        }
+
+        const doc = await context.db.collection(collectionName).findOne(query);
         return doc;
       },
       [`get${typeName}s`]: async (

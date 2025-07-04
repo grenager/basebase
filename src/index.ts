@@ -5,7 +5,11 @@ import dotenv from "dotenv";
 import { createServer } from "node:http";
 import { createSchema } from "graphql-yoga";
 
-import { GraphQLTypeManager, GraphQLFieldDefinition } from "./graphqlTypes";
+import {
+  GraphQLTypeDefinition,
+  GraphQLField,
+  GraphQLTypeManager,
+} from "./graphqlTypes";
 import { generateSchema } from "./schemaGenerator";
 import { AuthService } from "./services/auth";
 import { AuthorizationService } from "./services/authorization";
@@ -29,12 +33,19 @@ interface GraphQLContext extends YogaInitialContext {
 interface CreateTypeInput {
   name: string;
   description?: string;
-  fields: GraphQLFieldDefinition[];
+  fields: GraphQLField[];
 }
 
 interface AddFieldInput {
   typeName: string;
-  field: GraphQLFieldDefinition;
+  name: string;
+  type: string;
+  description?: string;
+  isList: boolean;
+  isRequired: boolean;
+  isListItemRequired: boolean;
+  refType: string;
+  unique: boolean;
 }
 
 // Load environment variables
@@ -107,14 +118,14 @@ const typeManagementTypeDefs = `
     "The GraphQL type (ID, String, Int, Boolean, Date, or custom type name)"
     type: String!
     
-    "Optional description that will Projectear in the GraphQL schema documentation"
+    "Optional description that will appear in the GraphQL schema documentation"
     description: String
     
     "Whether this field returns a list/array of values"
-    isList: Boolean!
+    isList: Boolean
     
     "Whether this field is required (non-null)"
-    isRequired: Boolean!
+    isRequired: Boolean
     
     "For list fields, whether individual list items are required (non-null)"
     isListItemRequired: Boolean
@@ -133,22 +144,11 @@ const typeManagementTypeDefs = `
     "The name of the new type (must be unique)"
     name: String!
     
-    "Optional description for the type that will Projectear in schema documentation"
+    "Optional description for the type that will appear in schema documentation"
     description: String
     
     "Array of field definitions for this type"
     fields: [GraphQLFieldInput!]!
-  }
-
-  """
-  Input for adding a new field to an existing GraphQL type
-  """
-  input AddFieldInput {
-    "The name of the existing type to add the field to"
-    typeName: String!
-    
-    "The field definition to add"
-    field: GraphQLFieldInput!
   }
 
   extend type Mutation {
@@ -171,7 +171,7 @@ const typeManagementTypeDefs = `
     
     Requires authentication.
     """
-    createFieldOnType(input: AddFieldInput!): Boolean!
+    createFieldOnType(typeName: String!, field: GraphQLFieldInput!): Boolean!
   }
 `;
 
@@ -264,11 +264,18 @@ const typeManagementResolvers = {
 
         const typeManager = new GraphQLTypeManager(context.db);
 
+        // Set default values for isList and isRequired
+        const fieldsWithDefaults = input.fields.map((field) => ({
+          ...field,
+          isList: field.isList ?? false,
+          isRequired: field.isRequired ?? false,
+        }));
+
         // Validate field references
         const errors = await typeManager.validateFieldReferences({
           name: input.name,
           description: input.description,
-          fields: input.fields,
+          fields: fieldsWithDefaults,
           creator: new ObjectId(context.currentUser._id),
           projectId: new ObjectId(context.currentUser.currentProjectId),
         });
@@ -280,7 +287,7 @@ const typeManagementResolvers = {
         await typeManager.addGraphQLType({
           name: input.name,
           description: input.description,
-          fields: input.fields,
+          fields: fieldsWithDefaults,
           creator: new ObjectId(context.currentUser._id),
           projectId: new ObjectId(context.currentUser.currentProjectId),
         });
@@ -297,7 +304,7 @@ const typeManagementResolvers = {
 
     createFieldOnType: async (
       _: any,
-      { input }: { input: AddFieldInput },
+      { typeName, field }: { typeName: string; field: GraphQLField },
       context: GraphQLContext
     ) => {
       const isAuthorized = !!context.currentUser;
@@ -309,13 +316,13 @@ const typeManagementResolvers = {
         }
 
         // Check for reserved field names "id" and "creator"
-        if (input.field.name === "id") {
+        if (field.name === "id") {
           throw new Error(
             'Field name "id" is reserved and automatically added to all types'
           );
         }
 
-        if (input.field.name === "creator") {
+        if (field.name === "creator") {
           throw new Error(
             'Field name "creator" is reserved and automatically added to all types'
           );
@@ -324,17 +331,22 @@ const typeManagementResolvers = {
         const typeManager = new GraphQLTypeManager(context.db);
 
         // Check if type exists
-        const existingType = await typeManager.getGraphQLTypeByName(
-          input.typeName
-        );
+        const existingType = await typeManager.getGraphQLTypeByName(typeName);
         if (!existingType) {
-          throw new Error(`Type "${input.typeName}" not found`);
+          throw new Error(`Type "${typeName}" not found`);
         }
+
+        // Set default values for isList and isRequired
+        const fieldWithDefaults = {
+          ...field,
+          isList: field.isList ?? false,
+          isRequired: field.isRequired ?? false,
+        };
 
         // Validate field references for the new field
         const errors = await typeManager.validateFieldReferences({
-          name: input.typeName,
-          fields: [input.field],
+          name: typeName,
+          fields: [fieldWithDefaults],
           creator: new ObjectId(context.currentUser._id),
           projectId: new ObjectId(context.currentUser.currentProjectId),
         });
@@ -344,15 +356,20 @@ const typeManagementResolvers = {
         }
 
         // Add field to type
-        await typeManager.updateGraphQLType(input.typeName, {
-          fields: [...existingType.fields, input.field],
+        await typeManager.updateGraphQLType(typeName, {
+          fields: [...existingType.fields, fieldWithDefaults],
         });
         result = true;
       } catch (error) {
         result = error;
         throw error;
       } finally {
-        logger.graphql("createFieldOnType", { input }, isAuthorized, result);
+        logger.graphql(
+          "createFieldOnType",
+          { typeName, field },
+          isAuthorized,
+          result
+        );
       }
 
       return result;
