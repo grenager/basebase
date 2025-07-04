@@ -4,6 +4,7 @@ import { Db, ObjectId } from "mongodb";
 import jwt from "jsonwebtoken";
 import twilio from "twilio";
 import crypto from "crypto";
+import { validatePhone } from "../utils/validators";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const VERIFICATION_CODE_EXPIRY = 10 * 60 * 1000; // 10 minutes
@@ -95,6 +96,7 @@ export class AuthService {
       );
     }
 
+    validatePhone(phone);
     const code = this.generateVerificationCode();
     const expiresAt = new Date(Date.now() + VERIFICATION_CODE_EXPIRY);
 
@@ -135,6 +137,7 @@ export class AuthService {
     code: string,
     appApiKey: string
   ): Promise<string | null> {
+    validatePhone(phone);
     const attempt = await this.verificationAttemptsCollection.findOne({
       phone,
     });
@@ -181,7 +184,9 @@ export class AuthService {
       }
 
       // Delete verification attempt
-      await this.verificationAttemptsCollection.deleteOne({ phone });
+      await this.verificationAttemptsCollection.deleteOne({
+        phone,
+      });
 
       // Generate JWT with both user and app ID
       return this.generateToken(userId, app._id.toString());

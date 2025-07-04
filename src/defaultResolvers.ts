@@ -2,6 +2,7 @@ import { Db, ObjectId } from "mongodb";
 import { logger } from "./utils/logger";
 import { GraphQLTypeDefinition, isCustomType } from "./graphqlTypes";
 import { AuthorizationService } from "./services/authorization";
+import { validateEmail, validatePhone } from "./utils/validators";
 
 export interface ResolverContext {
   db: Db;
@@ -308,6 +309,16 @@ export const defaultResolvers = {
       );
 
       const { id: _, ...updateData } = data; // Remove id if present
+
+      // If updating a user, validate email if provided
+      if (collection === "users" && updateData.email) {
+        validateEmail(updateData.email);
+      }
+
+      // If updating a user, validate phone if provided
+      if (collection === "users" && updateData.phone) {
+        validatePhone(updateData.phone);
+      }
 
       // Convert custom type fields to ObjectIds for storage
       const convertedData = typeDefinition
