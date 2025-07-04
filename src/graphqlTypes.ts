@@ -17,20 +17,10 @@ export interface GraphQLField {
   name: string;
   type: GraphQLScalarType | string;
   description?: string;
-  isList: boolean;
-  isRequired: boolean;
+  isList?: boolean;
+  isRequired?: boolean;
   isListItemRequired?: boolean;
-  refType?: string;
   unique?: boolean;
-}
-
-export interface GraphQLFieldDefinition {
-  name: string;
-  type: string;
-  description?: string;
-  isList: boolean;
-  isRequired: boolean;
-  isListItemRequired?: boolean;
 }
 
 export interface GraphQLTypeDefinition {
@@ -162,17 +152,6 @@ export class GraphQLTypeManager {
     type: Omit<GraphQLTypeDefinition, "createdAt" | "updatedAt" | "_id">
   ): Promise<string[]> {
     const errors = this.validateNoReservedFields(type.fields);
-
-    // Continue with existing reference validation
-    for (const field of type.fields) {
-      if (field.refType) {
-        const referencedType = await this.getGraphQLTypeByName(field.refType);
-        if (!referencedType && field.refType !== "User") {
-          // Allow User type references
-          errors.push(`Referenced type "${field.refType}" does not exist`);
-        }
-      }
-    }
 
     return errors;
   }

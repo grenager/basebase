@@ -39,7 +39,7 @@
  * ```
  */
 
-import { GraphQLTypeDefinition, GraphQLFieldDefinition } from "./graphqlTypes";
+import { GraphQLTypeDefinition, GraphQLField } from "./graphqlTypes";
 import { ObjectId } from "mongodb";
 
 // Custom scalar for Date type that serializes to ISO string
@@ -62,7 +62,7 @@ export const scalarResolvers = {
 
 const RESERVED_FIELD_NAMES = ["id", "creator", "createdAt", "updatedAt"];
 
-const DEFAULT_FIELDS: GraphQLFieldDefinition[] = [
+const DEFAULT_FIELDS: GraphQLField[] = [
   {
     name: "id",
     type: "ID",

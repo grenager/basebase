@@ -166,12 +166,11 @@ Field Properties:
 
 - `name`: The name of the field (required)
 - `type`: The field type - can be a built-in scalar (ID, String, Int, Float, Boolean, Date) or a custom type name (required)
-- `description`: Optional description for documentation
-- `isList`: Whether the field is an array/list
-- `isRequired`: Whether the field is required (non-null)
-- `isListItemRequired`: For list fields, whether individual items are required
-- `refType`: For ID fields, specifies which type this ID references
-- `unique`: Whether this field should have a unique index in MongoDB (optional)
+- `description`: Optional description for documentation (optional)
+- `isList`: Whether the field is an array/list (optional, defaults to false)
+- `isRequired`: Whether the field is required (optional, defaults to false)
+- `isListItemRequired`: For list fields, whether individual items are required (optional, defaults to false)
+- `unique`: Whether this field should have a unique index in MongoDB (optional, defaults to false)
 
 2. Add a field to an existing type:
 

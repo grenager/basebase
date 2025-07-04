@@ -115,9 +115,6 @@ const typeManagementTypeDefs = `
     "For list fields, whether individual list items are required (non-null)"
     isListItemRequired: Boolean
     
-    "For ID fields, specifies which type this ID references (foreign key relationship)"
-    refType: String
-
     "Whether this field should have a unique index in MongoDB"
     unique: Boolean
   }
