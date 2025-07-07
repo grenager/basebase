@@ -391,7 +391,7 @@ export function generateResolvers(type: GraphQLTypeDefinition): any {
     const resolvers: any = {
       // Type resolvers for default fields
       [typeName]: {
-        id: (parent: any) => parent._id.toString(),
+        id: (parent: any) => (parent.id || parent._id).toString(),
         creator: async (parent: any, _: any, context: any) => {
           if (!parent.creator) return null;
           const user = await context.db.collection("users").findOne({
